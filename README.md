@@ -5,7 +5,7 @@ This repo aims to create a RAG (Retrieval-Augmented Generation) for unstructured
 
 1. Intelligent Ingestion (Docling) ----> Output: a rich Markdown document (or JSON) where tables are perfectly formatted and section headers are preserved;
 2. Document-Native Chunking ----> Output: through Markdown Splitter (like LangChain's MarkdownHeaderTextSplitter) divide Markdown document into smaller "chunks";
-3. Embedding (Vectorization) --_-> Output: The embedding model translates the meaning of text into mathematical vectors;
+3. Embedding (Vectorization) ----> Output: The embedding model translates the meaning of text into mathematical vectors;
 4. Vector Database (Storage) ----> Output: The vectors (and the original Markdown text they represent) are saved in a database.
 5. Retrieval and Generation (The User Query):
    1. Search (Retriever): The pipeline converts the question into a vector and searches the Vector Database for the closest mathematical matches. It pulls out the top 5 most relevant Markdown chunks;
