@@ -1,5 +1,6 @@
 // RAG Chatbot - Frontend JavaScript
 
+// Chat elements
 const chatContainer = document.getElementById('chatContainer');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
@@ -10,6 +11,10 @@ const loadingOverlay = document.getElementById('loadingOverlay');
 
 let currentDocId = null;
 let isUploading = false;
+
+// ============================================
+// CHAT FUNCTIONALITY
+// ============================================
 
 // Auto-resize textarea
 messageInput.addEventListener('input', () => {

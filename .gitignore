@@ -40,6 +40,8 @@ wheels/
 # Job directories (extractor output)
 jobs/
 
+# Data folder
+data/
 
 
 

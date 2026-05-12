@@ -38,8 +38,14 @@ if STATIC_DIR.exists():
 
 @app.get("/")
 async def root():
-    """Serve chatbot UI."""
+    """Serve home page."""
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/rag.html")
+async def rag_page():
+    """Serve RAG chat page."""
+    return FileResponse(STATIC_DIR / "rag.html")
 
 
 @app.post("/api/upload")
