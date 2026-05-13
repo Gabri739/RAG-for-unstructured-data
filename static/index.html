@@ -36,36 +36,83 @@
                 </p>
             </div>
 
-            <!-- Features Grid -->
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <!-- Pipeline Flow -->
+            <div class="pipeline-flow">
+                <div class="pipeline-step step-1">
+                    <div class="pipeline-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                             <polyline points="14 2 14 8 20 8"/>
-                            <line x1="16" y1="13" x2="8" y2="13"/>
-                            <line x1="16" y1="17" x2="8" y2="17"/>
-                            <polyline points="10 9 9 9 8 9"/>
                         </svg>
                     </div>
-                    <span class="feature-text">PDF & Images</span>
+                    <span class="pipeline-text">Extractor</span>
+                    <span class="pipeline-desc">OCR & Parsing</span>
                 </div>
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="11" cy="11" r="8"/>
-                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                <div class="pipeline-arrow">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                        <polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                </div>
+                <div class="pipeline-step step-2">
+                    <div class="pipeline-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="7" height="7"/>
+                            <rect x="14" y="3" width="7" height="7"/>
+                            <rect x="14" y="14" width="7" height="7"/>
+                            <rect x="3" y="14" width="7" height="7"/>
                         </svg>
                     </div>
-                    <span class="feature-text">Smart Search</span>
+                    <span class="pipeline-text">Chunking</span>
+                    <span class="pipeline-desc">Split Text</span>
                 </div>
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <div class="pipeline-arrow">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                        <polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                </div>
+                <div class="pipeline-step step-3">
+                    <div class="pipeline-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                        </svg>
+                    </div>
+                    <span class="pipeline-text">Embeddings</span>
+                    <span class="pipeline-desc">Vectorize</span>
+                </div>
+                <div class="pipeline-arrow">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                        <polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                </div>
+                <div class="pipeline-step step-4">
+                    <div class="pipeline-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                        </svg>
+                    </div>
+                    <span class="pipeline-text">VectorDB</span>
+                    <span class="pipeline-desc">Store Data</span>
+                </div>
+                <div class="pipeline-arrow">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                        <polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                </div>
+                <div class="pipeline-step step-5 highlight">
+                    <div class="pipeline-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                         </svg>
                     </div>
-                    <span class="feature-text">AI Chat</span>
+                    <span class="pipeline-text">AI Chat</span>
+                    <span class="pipeline-desc">Ask & Answer</span>
                 </div>
             </div>
 
@@ -77,6 +124,12 @@
                     <polyline points="12 5 19 12 12 19"/>
                 </svg>
             </a>
+
+            <!-- RAG Guide -->
+            <div class="rag-guide">
+                <h3 class="guide-title">How RAG Works</h3>
+                <p class="guide-text">This pipeline implements a complete <span>Retrieval-Augmented Generation</span> architecture. Documents undergo <span>intelligent ingestion</span> via OCR and Docling to produce structured Markdown. The <span>MarkdownHeaderTextSplitter</span> performs semantic chunking preserving hierarchy. Each chunk is vectorized using <span>embedding models</span> and stored in <span>ChromaDB</span>. At query time, the system retrieves top-K matches, re-ranks results, and generates contextual responses with <span>page-level citations</span> grounded in your actual documents.</p>
+            </div>
 
             <!-- Footer Note -->
             <p class="welcome-footer">Supported formats: PDF, PNG, JPG, WEBP</p>

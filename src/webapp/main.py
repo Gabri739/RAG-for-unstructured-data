@@ -49,7 +49,7 @@ async def rag_page():
 
 
 @app.post("/api/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), strategy: str = "vision"):
     """Upload PDF and process with OCR."""
     if not file.filename:
         raise HTTPException(400, "Missing filename")
@@ -58,6 +58,10 @@ async def upload_pdf(file: UploadFile = File(...)):
     allowed = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
     if suffix not in allowed:
         raise HTTPException(400, f"Unsupported: {suffix}")
+
+    # Validate strategy
+    if strategy not in {"vision", "docling"}:
+        strategy = "vision"
 
     # Save file
     doc_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -68,16 +72,17 @@ async def upload_pdf(file: UploadFile = File(...)):
     with src_path.open("wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # Process in background
+    # Process with selected strategy
     try:
         if suffix == ".pdf":
-            result = await convert_pdf(src_path, doc_dir, strategy="vision")
+            result = await convert_pdf(src_path, doc_dir, strategy=strategy)
         else:
-            result = await convert_image(src_path, doc_dir, strategy="vision")
+            result = await convert_image(src_path, doc_dir, strategy=strategy)
 
         return {
             "doc_id": doc_id,
             "pages": result.pages,
+            "strategy": strategy,
             "markdown": result.markdown[:1000] + "..." if len(result.markdown) > 1000 else result.markdown
         }
     except Exception as e:
