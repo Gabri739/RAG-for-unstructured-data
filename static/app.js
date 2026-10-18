@@ -8,12 +8,9 @@ const uploadBtn = document.getElementById('uploadBtn');
 const fileInput = document.getElementById('fileInput');
 const uploadStatus = document.getElementById('uploadStatus');
 const loadingOverlay = document.getElementById('loadingOverlay');
-const ocrModal = document.getElementById('ocrModal');
-const modalCancel = document.getElementById('modalCancel');
 
 let currentDocId = null;
 let isUploading = false;
-let pendingFile = null;
 
 // ============================================
 // CHAT FUNCTIONALITY
@@ -36,15 +33,15 @@ messageInput.addEventListener('keydown', (e) => {
 
 sendBtn.addEventListener('click', sendMessage);
 
-// File upload - Show OCR strategy modal first
+// File upload (PDF parsed server-side with Docling)
 uploadBtn.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file) return;
 
-    pendingFile = file;
-    showOcrModal();
+    await uploadFile(file);
+    fileInput.value = '';
 });
 
 // Drag and drop
@@ -62,44 +59,12 @@ chatContainer.addEventListener('drop', async (e) => {
     chatContainer.style.background = '';
 
     const file = e.dataTransfer.files[0];
-    if (file && (file.type === 'application/pdf' || file.type.startsWith('image/'))) {
-        pendingFile = file;
-        showOcrModal();
+    if (file && file.type === 'application/pdf') {
+        await uploadFile(file);
     }
 });
 
-// OCR Modal functions
-function showOcrModal() {
-    console.log('Showing OCR modal for file:', pendingFile?.name);
-    ocrModal.hidden = false;
-    console.log('Modal element:', ocrModal);
-}
-
-function hideOcrModal() {
-    ocrModal.hidden = true;
-    pendingFile = null;
-    fileInput.value = '';
-}
-
-// Handle OCR strategy selection
-document.querySelectorAll('.modal-option').forEach(btn => {
-    btn.addEventListener('click', async () => {
-        const strategy = btn.dataset.strategy;
-        ocrModal.hidden = true;
-        if (pendingFile) {
-            await uploadFile(pendingFile, strategy);
-            pendingFile = null;
-            fileInput.value = '';
-        }
-    });
-});
-
-// Cancel button
-modalCancel.addEventListener('click', () => {
-    hideOcrModal();
-});
-
-async function uploadFile(file, strategy = 'vision') {
+async function uploadFile(file) {
     if (isUploading) return;
     isUploading = true;
 
@@ -109,7 +74,6 @@ async function uploadFile(file, strategy = 'vision') {
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('strategy', strategy);
 
     try {
         const response = await fetch('/api/upload', {

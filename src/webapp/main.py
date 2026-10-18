@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.extractors.pdf_converter import convert_pdf, convert_image
+from src.extractors import parse_pdf
 
 app = FastAPI(title="RAG Chatbot")
 
@@ -29,6 +29,7 @@ app.add_middleware(
 BASE_DIR = Path(__file__).parent.parent.parent.resolve()
 STATIC_DIR = BASE_DIR / "static"
 DATA_DIR = BASE_DIR / "data" / "raw"
+PROCESSED_DIR = BASE_DIR / "data" / "processed"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Serve static files
@@ -49,19 +50,14 @@ async def rag_page():
 
 
 @app.post("/api/upload")
-async def upload_pdf(file: UploadFile = File(...), strategy: str = "vision"):
-    """Upload PDF and process with OCR."""
+async def upload_pdf(file: UploadFile = File(...)):
+    """Upload PDF and parse it with Docling."""
     if not file.filename:
         raise HTTPException(400, "Missing filename")
 
     suffix = Path(file.filename).suffix.lower()
-    allowed = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
-    if suffix not in allowed:
-        raise HTTPException(400, f"Unsupported: {suffix}")
-
-    # Validate strategy
-    if strategy not in {"vision", "docling"}:
-        strategy = "vision"
+    if suffix != ".pdf":
+        raise HTTPException(400, f"Unsupported: {suffix} (solo PDF nativi)")
 
     # Save file
     doc_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -72,29 +68,26 @@ async def upload_pdf(file: UploadFile = File(...), strategy: str = "vision"):
     with src_path.open("wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # Process with selected strategy
+    # Parse with Docling (CPU/GPU-bound: run in a worker thread)
     try:
-        if suffix == ".pdf":
-            result = await convert_pdf(src_path, doc_dir, strategy=strategy)
-        else:
-            result = await convert_image(src_path, doc_dir, strategy=strategy)
+        result = await asyncio.to_thread(parse_pdf, src_path, PROCESSED_DIR / doc_id)
 
         return {
             "doc_id": doc_id,
             "pages": result.pages,
-            "strategy": strategy,
+            "tables": result.tables,
             "markdown": result.markdown[:1000] + "..." if len(result.markdown) > 1000 else result.markdown
         }
     except Exception as e:
         shutil.rmtree(doc_dir, ignore_errors=True)
+        shutil.rmtree(PROCESSED_DIR / doc_id, ignore_errors=True)
         raise HTTPException(500, str(e))
 
 
 @app.get("/api/documents/{doc_id}")
 async def get_document(doc_id: str):
     """Get processed document markdown."""
-    doc_dir = DATA_DIR / doc_id
-    md_path = doc_dir / "output.md"
+    md_path = PROCESSED_DIR / doc_id / "document.md"
     if not md_path.exists():
         raise HTTPException(404, "Document not found")
     return {"markdown": md_path.read_text(encoding="utf-8")}

@@ -37,9 +37,6 @@ wheels/
 # Logs
 *.log
 
-# Job directories (extractor output)
-jobs/
-
 # Data folder
 data/
 
