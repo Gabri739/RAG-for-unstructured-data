@@ -14,6 +14,7 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import DoclingDocument
 
 from .table_fusion import FusionReport, fuse_document_tables
+from .table_images import MARKDOWN_BLOCKED_META, TableImagesReport, save_table_images
 
 
 @dataclass
@@ -25,6 +26,7 @@ class ParseResult:
     pages: int
     tables: int
     fusion_report: FusionReport | None = None
+    table_images: TableImagesReport | None = None
 
 
 @lru_cache(maxsize=1)
@@ -54,14 +56,28 @@ def parse_pdf(
     output_dir: Path | None = None,
     *,
     fuse_tables: bool = True,
+    save_images: bool = True,
 ) -> ParseResult:
-    """Converte un PDF in DoclingDocument, fonde le tabelle multi-pagina e salva gli artefatti."""
+    """Converte un PDF in DoclingDocument, fonde le tabelle multi-pagina e salva gli artefatti.
+
+    Se `output_dir` è indicato e `save_images` è True, salva anche un PNG per ogni pagina di
+    ogni tabella in `<output_dir>/table_images/` e ne registra i percorsi (relativi a
+    `output_dir`) nei metadati della tabella (`table.meta["rag__table_images"]`).
+    """
     doc = get_converter().convert(pdf_path).document
     fusion_report = fuse_document_tables(doc) if fuse_tables else None
-    markdown = doc.export_to_markdown()
+    table_images: TableImagesReport | None = None
 
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
+        if save_images:
+            table_images = save_table_images(
+                doc, output_dir / "table_images", relative_to=output_dir
+            )
+
+    markdown = doc.export_to_markdown(blocked_meta_names=MARKDOWN_BLOCKED_META)
+
+    if output_dir is not None:
         (output_dir / "document.md").write_text(markdown, encoding="utf-8")
         doc.save_as_json(output_dir / "document.json")
 
@@ -71,5 +87,6 @@ def parse_pdf(
         pages=len(doc.pages),
         tables=len(doc.tables),
         fusion_report=fusion_report,
+        table_images=table_images,
     )
 
