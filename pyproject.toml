@@ -14,9 +14,11 @@ dependencies = [
     "torch>=2.7",
     "torchvision>=0.22",
     "docling>=2.140.0",
+    "flagembedding>=1.4.2",
+    "qdrant-client>=1.20.0",
 ]
 
-# PyTorch con CUDA 12.8 (RTX 3070) invece della build solo CPU di PyPI
+
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
