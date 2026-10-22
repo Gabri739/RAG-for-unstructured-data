@@ -4,14 +4,21 @@
   - Per le tabelle lunghe (`rows > max_table_rows`): suddivisione per blocchi di righe con
     ripetizione dell'intestazione di sezione, del titolo della tabella e dell'header delle
     colonne in ciascun chunk.
-  - Metadati completi per chunk: pagina/intervallo di pagine, sezione, tipo (`text` / `table`),
-    percorsi delle immagini (`image_paths`) e flag `possible_incomplete_table`.
+  - Metadati completi per chunk:
+      * `doc_id`, `source_file`, `chunk_id` (leggibile) e `point_id` (UUIDv5 deterministico per Qdrant)
+      * `pages`, `page_start`, `page_end`, `page_range`
+      * `section`, `chunk_type` (`text` / `table`), `image_paths`
+      * `possible_incomplete_table`, `empty_cells_ratio` (intera tabella),
+        `chunk_empty_cells_ratio` (singolo blocco) e `empty_columns` (colonne >= 80% vuote, min 3 righe).
 """
 
 from __future__ import annotations
 
+import json
 import re
+import uuid
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .table_utils import (
@@ -23,6 +30,8 @@ from .table_utils import (
 
 if TYPE_CHECKING:
     from docling_core.types.doc import DoclingDocument
+
+CHUNK_UUID_NAMESPACE = uuid.UUID("6ba7b812-9dad-11d1-80b4-00c04fd430c8")  # NAMESPACE_OID
 
 
 def _format_page_range(pages: list[int]) -> str | None:
@@ -39,6 +48,34 @@ def _format_section_path(headers: list[str]) -> str:
     return " > ".join(cleaned)
 
 
+def make_point_id(chunk_id: str) -> str:
+    """Genera un UUIDv5 deterministico da `chunk_id` (richiesto da Qdrant come ID del punto)."""
+    return str(uuid.uuid5(CHUNK_UUID_NAMESPACE, chunk_id))
+
+
+def _load_manifest_image_map(manifest: Path | dict[str, Any] | None) -> dict[int, list[str]]:
+    """Carica da `table_images.json` (se disponibile) la mappa `{table_index: [image_paths]}`."""
+    if manifest is None:
+        return {}
+    data: dict[str, Any]
+    if isinstance(manifest, Path):
+        if not manifest.exists():
+            return {}
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    elif isinstance(manifest, dict):
+        data = manifest
+    else:
+        return {}
+
+    result: dict[int, list[str]] = {}
+    for entry in data.get("tables", []):
+        t_idx = entry.get("table_index")
+        paths = entry.get("image_paths")
+        if isinstance(t_idx, int) and isinstance(paths, list):
+            result[t_idx] = [str(p) for p in paths]
+    return result
+
+
 @dataclass
 class Chunk:
     """Rappresenta un chunk pronto per l'embedding e il salvataggio nel Vector DB."""
@@ -49,8 +86,29 @@ class Chunk:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serializza il chunk in dizionario JSON-compatibile."""
+        """Serializza il chunk in dizionario JSON-compatibile (metadati ricchi completi)."""
         return asdict(self)
+
+    def to_vector_metadata(self, *, flat: bool = False) -> dict[str, Any]:
+        """Restituisce i metadati pronti per l'indicizzazione nel Vector DB.
+
+        - `flat=False` (default, per Qdrant): mantiene liste e dizionari nativi.
+        - `flat=True` (per ChromaDB): converte le liste in stringhe JSON ed elimina le chiavi `None`.
+        """
+        if not flat:
+            return dict(self.metadata)
+
+        flat_meta: dict[str, str | int | float | bool] = {}
+        for k, v in self.metadata.items():
+            if v is None:
+                continue
+            if isinstance(v, (str, int, float, bool)):
+                flat_meta[k] = v
+            elif isinstance(v, (list, dict)):
+                flat_meta[k] = json.dumps(v, ensure_ascii=False)
+            else:
+                flat_meta[k] = str(v)
+        return flat_meta
 
 
 class MarkdownChunker:
@@ -63,6 +121,8 @@ class MarkdownChunker:
         chunk_overlap: int = 200,
         max_table_rows: int = 25,
         empty_cells_threshold: float = 0.35,
+        col_empty_threshold: float = 0.80,
+        min_rows_for_col_check: int = 3,
         preserve_tables: bool = True,
     ) -> None:
         """Inizializza il chunker.
@@ -73,8 +133,12 @@ class MarkdownChunker:
             chunk_overlap: Sovrapposizione (in caratteri) tra chunk di testo consecutivi della stessa sezione.
             max_table_rows: Numero massimo di righe dati per chunk di tabella; oltre questa soglia la tabella
                 viene divisa in più chunk per righe, ripetendo header colonne e titolo in ciascuno.
-            empty_cells_threshold: Frazione di celle vuote (`0.0 - 1.0`) oltre la quale una tabella viene
-                marcata con `possible_incomplete_table = True`.
+            empty_cells_threshold: Frazione globale di celle vuote (`0.0 - 1.0`) oltre la quale una tabella
+                viene marcata con `possible_incomplete_table = True`.
+            col_empty_threshold: Frazione di celle vuote (`0.0 - 1.0`) in una singola colonna per segnalarla
+                in `empty_columns` (default `0.80`).
+            min_rows_for_col_check: Numero minimo di righe dati perché il controllo `empty_columns` per colonna
+                sia attivo (default `3`, evita falsi positivi su tabelle di 1-2 righe).
             preserve_tables: Se True (default), estrae le tabelle come chunk dedicati di tipo `"table"`.
         """
         raw_headers = headers_to_split_on or ["#", "##", "###", "####"]
@@ -84,11 +148,29 @@ class MarkdownChunker:
         self.chunk_overlap = chunk_overlap
         self.max_table_rows = max_table_rows
         self.empty_cells_threshold = empty_cells_threshold
+        self.col_empty_threshold = col_empty_threshold
+        self.min_rows_for_col_check = min_rows_for_col_check
         self.preserve_tables = preserve_tables
 
     # ------------------------------------------------------------------
     # Costruzione dei chunk (testo e tabella)
     # ------------------------------------------------------------------
+
+    def _assign_ids(
+        self,
+        chunks: list[Chunk],
+        doc_id: str,
+        source_file: str | None,
+    ) -> list[Chunk]:
+        """Assegna a ogni chunk `doc_id`, `source_file`, `chunk_index`, `chunk_id` e `point_id` (UUIDv5)."""
+        for idx, c in enumerate(chunks):
+            chunk_id = f"{doc_id}__chunk_{idx:04d}"
+            c.metadata["doc_id"] = doc_id
+            c.metadata["source_file"] = source_file
+            c.metadata["chunk_index"] = idx
+            c.metadata["chunk_id"] = chunk_id
+            c.metadata["point_id"] = make_point_id(chunk_id)
+        return chunks
 
     def _build_text_chunks(
         self,
@@ -109,6 +191,8 @@ class MarkdownChunker:
         body_parts = self._split_text_body(full_body, max_body_chars, self.chunk_overlap)
         total_parts = len(body_parts)
         sorted_pages = sorted(set(pages))
+        page_start = sorted_pages[0] if sorted_pages else None
+        page_end = sorted_pages[-1] if sorted_pages else None
         page_range = _format_page_range(sorted_pages)
         section_str = _format_section_path(header_stack)
 
@@ -124,9 +208,12 @@ class MarkdownChunker:
                         "chunk_type": "text",
                         "section": section_str,
                         "pages": sorted_pages,
+                        "page_start": page_start,
+                        "page_end": page_end,
                         "page_range": page_range,
                         "image_paths": [],
                         "possible_incomplete_table": False,
+                        "empty_columns": [],
                         "part": idx,
                         "total_parts": total_parts,
                     },
@@ -183,9 +270,16 @@ class MarkdownChunker:
         content = f"{header_prefix}\n\n{table_md}" if header_prefix else table_md
 
         sorted_pages = sorted(set(table.pages))
+        page_start = sorted_pages[0] if sorted_pages else None
+        page_end = sorted_pages[-1] if sorted_pages else None
         page_range = _format_page_range(sorted_pages)
         section_str = _format_section_path(header_stack)
-        incomplete = table.is_possibly_incomplete(self.empty_cells_threshold)
+        incomplete = table.is_possibly_incomplete(
+            empty_ratio_threshold=self.empty_cells_threshold,
+            col_empty_threshold=self.col_empty_threshold,
+            min_rows_for_col_check=self.min_rows_for_col_check,
+        )
+        empty_cols = list(table.empty_columns) if table.empty_columns is not None else []
 
         return Chunk(
             content=content,
@@ -195,10 +289,14 @@ class MarkdownChunker:
                 "chunk_type": "table",
                 "section": section_str,
                 "pages": sorted_pages,
+                "page_start": page_start,
+                "page_end": page_end,
                 "page_range": page_range,
                 "image_paths": list(table.image_paths),
                 "possible_incomplete_table": incomplete,
                 "empty_cells_ratio": table.empty_cells_ratio,
+                "chunk_empty_cells_ratio": table.chunk_empty_cells_ratio,
+                "empty_columns": empty_cols,
                 "table_index": table.table_index,
                 "table_title": table.title,
                 "row_count": len(table.rows),
@@ -215,16 +313,31 @@ class MarkdownChunker:
     # Modalità 1: Chunking diretto da DoclingDocument (Step 4 & 5)
     # ------------------------------------------------------------------
 
-    def chunk_document(self, doc: DoclingDocument) -> list[Chunk]:
+    def chunk_document(
+        self,
+        doc: DoclingDocument,
+        *,
+        doc_id: str | None = None,
+        source_file: str | None = None,
+        table_images_manifest: Path | dict[str, Any] | None = None,
+    ) -> list[Chunk]:
         """Esegue il chunking nativo su un `DoclingDocument` (dopo fusione tabelle e salvataggio immagini).
 
-        - Mantiene lo stack gerarchico delle intestazioni (`SectionHeaderItem`, `TitleItem`).
-        - Raggruppa i paragrafi e le liste per sezione, dividendoli se superano `chunk_size`.
-        - Per ogni `TableItem`, estrae titolo, header colonne, pagine e `image_paths`, e se
-          la tabella supera `max_table_rows` righe la divide in più chunk ripetendo titolo e
-          header delle colonne in ciascun chunk.
+        Args:
+            doc: `DoclingDocument` già processato da `fuse_document_tables`.
+            doc_id: Identificativo univoco del documento (default: `doc.name` o `"document"`).
+            source_file: Nome del file sorgente (es. `"source.pdf"`).
+            table_images_manifest: Percorso (o dict) di `table_images.json` usato come fonte
+                principale per `image_paths`, con fallback a `table.meta["rag__table_images"]`.
         """
         from docling_core.types.doc import DocItemLabel, SectionHeaderItem, TableItem
+
+        resolved_doc_id = doc_id or getattr(doc, "name", None) or "document"
+        resolved_source = source_file
+        if resolved_source is None and getattr(doc, "origin", None) is not None:
+            resolved_source = getattr(doc.origin, "filename", None)
+
+        manifest_map = _load_manifest_image_map(table_images_manifest)
 
         owned_by_tables: set[str] = set()
         table_idx_by_ref: dict[str, int] = {}
@@ -296,6 +409,10 @@ class MarkdownChunker:
                     doc,
                     table_index=t_idx,
                     fallback_title=fallback_title,
+                    manifest_image_paths=manifest_map.get(t_idx) if t_idx is not None else None,
+                    empty_ratio_threshold=self.empty_cells_threshold,
+                    col_empty_threshold=self.col_empty_threshold,
+                    min_rows_for_col_check=self.min_rows_for_col_check,
                 )
                 for row_chunk_block in split_large_table(t_block, self.max_table_rows):
                     all_chunks.append(self._create_table_chunk(row_chunk_block, current_header_stack()))
@@ -318,7 +435,7 @@ class MarkdownChunker:
             last_short_paragraph = text if len(text) <= 160 else None
 
         flush_text()
-        return all_chunks
+        return self._assign_ids(all_chunks, doc_id=resolved_doc_id, source_file=resolved_source)
 
     # ------------------------------------------------------------------
     # Modalità 2: Chunking da stringa Markdown
@@ -365,7 +482,13 @@ class MarkdownChunker:
         flush_section()
         return sections
 
-    def chunk(self, markdown_content: str) -> list[Chunk]:
+    def chunk(
+        self,
+        markdown_content: str,
+        *,
+        doc_id: str = "markdown_doc",
+        source_file: str | None = None,
+    ) -> list[Chunk]:
         """Divide una stringa Markdown in chunk per intestazioni e tabelle."""
         sections = self._split_markdown_by_headers(markdown_content)
         all_chunks: list[Chunk] = []
@@ -376,7 +499,7 @@ class MarkdownChunker:
                 continue
             all_chunks.extend(self._process_tables_in_markdown_section(section_body, header_stack))
 
-        return all_chunks
+        return self._assign_ids(all_chunks, doc_id=doc_id, source_file=source_file)
 
     def _process_tables_in_markdown_section(
         self,
@@ -384,6 +507,8 @@ class MarkdownChunker:
         header_stack: list[str],
     ) -> list[Chunk]:
         """Estrae testo e tabelle da una sezione Markdown, dividendo le tabelle lunghe per righe."""
+        from .table_utils import find_empty_columns
+
         tables = find_all_tables(content)
         if not tables:
             return self._build_text_chunks([content], header_stack, pages=[])
@@ -394,7 +519,6 @@ class MarkdownChunker:
 
         for table in tables:
             text_lines = lines[last_end : table.start_line]
-            # Se l'ultima riga non vuota prima della tabella è stata usata come caption, non duplicarla
             if table.title:
                 while text_lines and not text_lines[-1].strip():
                     text_lines.pop()
@@ -410,6 +534,19 @@ class MarkdownChunker:
 
             if not table.title and header_stack:
                 table.title = re.sub(r"^#+\s*", "", header_stack[-1]).strip()
+
+            # Ricalcola empty_columns e flag sull'intera tabella prima dello split per righe
+            table.empty_columns = find_empty_columns(
+                table.headers,
+                table.rows,
+                col_empty_threshold=self.col_empty_threshold,
+                min_rows=self.min_rows_for_col_check,
+            )
+            table.table_possibly_incomplete = table.is_possibly_incomplete(
+                empty_ratio_threshold=self.empty_cells_threshold,
+                col_empty_threshold=self.col_empty_threshold,
+                min_rows_for_col_check=self.min_rows_for_col_check,
+            )
 
             for tc in split_large_table(table, self.max_table_rows):
                 chunks.append(self._create_table_chunk(tc, header_stack))

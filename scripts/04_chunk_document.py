@@ -1,7 +1,7 @@
 """Step 4 - Chunking per intestazioni e per righe tabella su DoclingDocument.
 
-Carica `document_images.json` (o `document_fused.json`) prodotto dallo Step 3/2,
-esegue `MarkdownChunker.chunk_document(doc)` e salva:
+Carica `document_images.json` (o `document_fused.json`) e il manifest `table_images.json`
+prodotti dallo Step 3/2, esegue `MarkdownChunker.chunk_document(doc)` e salva:
   - <out>/chunks.json         lista completa dei chunk con content, headers e metadata
   - <out>/chunks_preview.md   anteprima leggibile di tutti i chunk generati
 
@@ -34,6 +34,8 @@ if not DOC_JSON.exists():
         f"Nessun file Docling trovato in {OUT}. Esegui prima gli script 01, 02 e 03."
     )
 
+MANIFEST_JSON = OUT / "table_images.json"
+
 t0 = time.perf_counter()
 doc = DoclingDocument.load_from_json(DOC_JSON)
 load_s = time.perf_counter() - t0
@@ -45,7 +47,11 @@ chunker = MarkdownChunker(
     chunk_overlap=200,
     max_table_rows=MAX_TABLE_ROWS,
 )
-chunks = chunker.chunk_document(doc)
+chunks = chunker.chunk_document(
+    doc,
+    doc_id=OUT.name,
+    table_images_manifest=MANIFEST_JSON if MANIFEST_JSON.exists() else None,
+)
 chunk_s = time.perf_counter() - t1
 
 text_chunks = [c for c in chunks if c.chunk_type == "text"]
@@ -67,11 +73,12 @@ for idx, c in enumerate(chunks):
     p_str = m.get("page_range") or "-"
     sec_str = m.get("section") or "(nessuna sezione)"
     if c.chunk_type == "table":
+        empty_cols_str = f" | col_vuote={m['empty_columns']}" if m.get("empty_columns") else ""
         print(
             f"  [{idx:03d}] TABLE pag {p_str:7s} | righe {m['row_range']:7s} "
             f"(parte {m['part']}/{m['total_parts']}) | img={len(m['image_paths'])} | "
-            f"incompleta={m['possible_incomplete_table']} ({m['empty_cells_ratio']*100:.0f}% vuote) | "
-            f"titolo={(m.get('table_title') or '')[:45]}"
+            f"incompleta={m['possible_incomplete_table']} ({m['empty_cells_ratio']*100:.0f}% vuote){empty_cols_str} | "
+            f"titolo={(m.get('table_title') or '')[:40]}"
         )
     else:
         print(
@@ -79,7 +86,6 @@ for idx, c in enumerate(chunks):
             f"(parte {m['part']}/{m['total_parts']}) | sez={sec_str[:55]}"
         )
 
-# Salva JSON e anteprima Markdown
 (OUT / "chunks.json").write_text(
     json.dumps([c.to_dict() for c in chunks], ensure_ascii=False, indent=2),
     encoding="utf-8",
@@ -87,7 +93,7 @@ for idx, c in enumerate(chunks):
 
 preview_lines: list[str] = [f"# Anteprima Chunk ({len(chunks)} totali)\n"]
 for idx, c in enumerate(chunks):
-    preview_lines.append(f"---\n## Chunk {idx} (`{c.chunk_type}`)\n")
+    preview_lines.append(f"---\n## Chunk {idx} (`{c.chunk_type}` — `{c.metadata.get('chunk_id')}`)\n")
     preview_lines.append(f"```json\n{json.dumps(c.metadata, ensure_ascii=False, indent=2)}\n```\n")
     preview_lines.append(c.content + "\n")
 
@@ -95,4 +101,3 @@ for idx, c in enumerate(chunks):
 
 print("-" * 95)
 print(f"Salvati: {OUT / 'chunks.json'} e {OUT / 'chunks_preview.md'}")
-

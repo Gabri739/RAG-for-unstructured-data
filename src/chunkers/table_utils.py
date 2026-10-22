@@ -1,14 +1,14 @@
 """Utilities per l'estrazione, normalizzazione e suddivisione per righe delle tabelle.
 
-Supporta sia:
-  1. `TableItem` di un `DoclingDocument` (con recupero di `pages`, `image_paths` da
-     `table.meta["rag__table_images"]`, didascalie, banner di titolo e note).
-  2. Tabelle già esportate in testo Markdown.
-
-Per le tabelle lunghe (`len(rows) > max_rows`), `split_large_table` divide le righe dati
-in blocchi di massimo `max_rows` righe ciascuno, ripetendo in ogni blocco:
-  - il titolo/didascalia della tabella (con indicazione `Parte k/N, righe A-B di TOT`)
-  - l'intestazione completa delle colonne (`headers`).
+Ordine garantito nella pipeline:
+  1. Fusione tabelle multi-pagina e ricucitura righe spezzate (`table_fusion.py`)
+  2. Estrazione di `TableBlock` e calcolo dei flag di completezza sull'INTERA tabella:
+     - `table_empty_cells_ratio` (frazione globale di celle vuote)
+     - `empty_columns` (colonne con >= 80% di celle vuote, calcolato solo se la tabella
+       ha almeno `min_rows_for_col_check = 3` righe dati e ignorando colonne opzionali come "Note")
+     - `possible_incomplete_table` (`table_empty_cells_ratio >= 0.35` oppure `bool(empty_columns)`)
+  3. Divisione per righe (`split_large_table`), che propaga a tutte le parti della tabella
+     i flag calcolati sull'intera tabella e ripete titolo e header colonne in ogni parte.
 """
 
 from __future__ import annotations
@@ -21,6 +21,43 @@ from src.extractors.table_images import get_table_images
 
 if TYPE_CHECKING:
     from docling_core.types.doc import DoclingDocument, TableItem
+
+# Intestazioni di colonne opzionali che possono essere legittimamente quasi vuote senza indicare errori di estrazione
+_OPTIONAL_COLUMN_NAMES_RE = re.compile(
+    r"^(?:note|annotazioni|osservazioni|commenti|rif\.?|riferimenti)$",
+    re.IGNORECASE,
+)
+
+
+def find_empty_columns(
+    headers: list[str],
+    rows: list[list[str]],
+    *,
+    col_empty_threshold: float = 0.80,
+    min_rows: int = 3,
+) -> list[str]:
+    """Individua le colonne con una frazione di celle vuote >= `col_empty_threshold`.
+
+    - Richiede almeno `min_rows` righe dati (default 3) per evitare falsi positivi su tabelle
+      di 1-2 righe dove una singola cella vuota supera il 50-100%.
+    - Esclude colonne puramente opzionali (es. "Note", "Osservazioni").
+    """
+    n_rows = len(rows)
+    if not headers or n_rows < min_rows:
+        return []
+
+    empty_cols: list[str] = []
+    for j, h in enumerate(headers):
+        h_clean = h.strip()
+        if _OPTIONAL_COLUMN_NAMES_RE.match(h_clean):
+            continue
+        empty_in_col = sum(
+            1 for r in rows if (r[j].strip() if j < len(r) else "") == ""
+        )
+        if (empty_in_col / n_rows) >= col_empty_threshold:
+            empty_cols.append(h_clean or f"Colonna {j + 1}")
+
+    return empty_cols
 
 
 @dataclass
@@ -42,12 +79,20 @@ class TableBlock:
     total_rows: int = 0
     part: int = 1
     total_parts: int = 1
+    # Metriche a livello di intera tabella (calcolate prima dello split per righe)
+    table_empty_cells_ratio: float | None = None
+    empty_columns: list[str] | None = None
+    table_possibly_incomplete: bool | None = None
 
     def __post_init__(self) -> None:
         if self.total_rows == 0:
             self.total_rows = len(self.rows)
         if self.row_end == 0:
             self.row_end = len(self.rows)
+        if self.table_empty_cells_ratio is None:
+            self.table_empty_cells_ratio = self.chunk_empty_cells_ratio
+        if self.empty_columns is None:
+            self.empty_columns = find_empty_columns(self.headers, self.rows)
 
     @property
     def caption(self) -> str | None:
@@ -61,12 +106,12 @@ class TableBlock:
 
     @property
     def total_cells_count(self) -> int:
-        """Numero totale di celle dati nel blocco."""
+        """Numero totale di celle dati nel blocco corrente."""
         return len(self.rows) * len(self.headers) if self.headers else 0
 
     @property
     def empty_cells_count(self) -> int:
-        """Numero di celle dati vuote nel blocco."""
+        """Numero di celle dati vuote nel blocco corrente."""
         if not self.headers:
             return 0
         n_cols = len(self.headers)
@@ -79,18 +124,49 @@ class TableBlock:
         return empty
 
     @property
-    def empty_cells_ratio(self) -> float:
-        """Frazione di celle dati vuote (0.0 - 1.0)."""
+    def chunk_empty_cells_ratio(self) -> float:
+        """Frazione di celle dati vuote sulle righe di questo singolo blocco (0.0 - 1.0)."""
         tot = self.total_cells_count
         if tot == 0:
             return 1.0
         return round(self.empty_cells_count / tot, 4)
 
-    def is_possibly_incomplete(self, empty_ratio_threshold: float = 0.35) -> bool:
-        """Restituisce True se la tabella ha troppe celle vuote o nessuna riga dati."""
+    @property
+    def empty_cells_ratio(self) -> float:
+        """Frazione di celle vuote a livello di intera tabella (coerente tra tutte le parti)."""
+        if self.table_empty_cells_ratio is not None:
+            return self.table_empty_cells_ratio
+        return self.chunk_empty_cells_ratio
+
+    def is_possibly_incomplete(
+        self,
+        empty_ratio_threshold: float = 0.35,
+        col_empty_threshold: float = 0.80,
+        min_rows_for_col_check: int = 3,
+    ) -> bool:
+        """Determina se la tabella è potenzialmente incompleta (a livello di intera tabella).
+
+        Scatta se:
+          - non ci sono righe dati o header, oppure
+          - il rapporto globale di celle vuote della tabella è >= `empty_ratio_threshold` (0.35), oppure
+          - esiste almeno una colonna non opzionale con >= `col_empty_threshold` (80%) di celle vuote
+            su una tabella con almeno `min_rows_for_col_check` (3) righe dati.
+        """
+        if self.table_possibly_incomplete is not None:
+            return self.table_possibly_incomplete
         if not self.rows or not self.headers:
             return True
-        return self.empty_cells_ratio >= empty_ratio_threshold
+        cols = (
+            self.empty_columns
+            if self.empty_columns is not None
+            else find_empty_columns(
+                self.headers,
+                self.rows,
+                col_empty_threshold=col_empty_threshold,
+                min_rows=min_rows_for_col_check,
+            )
+        )
+        return self.empty_cells_ratio >= empty_ratio_threshold or len(cols) > 0
 
     def format_title_line(self) -> str | None:
         """Formatta la riga del titolo della tabella (includendo eventuale Parte k/N)."""
@@ -186,8 +262,16 @@ def extract_table_block_from_docling(
     *,
     table_index: int | None = None,
     fallback_title: str | None = None,
+    manifest_image_paths: list[str] | None = None,
+    empty_ratio_threshold: float = 0.35,
+    col_empty_threshold: float = 0.80,
+    min_rows_for_col_check: int = 3,
 ) -> TableBlock:
-    """Estrae un `TableBlock` strutturato da un `TableItem` di Docling."""
+    """Estrae un `TableBlock` strutturato da un `TableItem` di Docling.
+
+    Usa `manifest_image_paths` (da `table_images.json`) come fonte principale dei percorsi
+    immagine se fornito, con fallback automatico a `table.meta["rag__table_images"]`.
+    """
     grid = table.data.grid
     rows_text: list[list[str]] = []
     row_is_header: list[bool] = []
@@ -223,7 +307,6 @@ def extract_table_block_from_docling(
         else:
             data_rows.append(r_text)
 
-    # Fallback: se nessuna riga ha column_header=True, usa la prima riga come header
     if not header_rows and data_rows:
         header_rows = [data_rows[0]]
         data_rows = data_rows[1:]
@@ -253,10 +336,20 @@ def extract_table_block_from_docling(
             footnotes.append(fn_text)
 
     pages = sorted({p.page_no for p in getattr(table, "prov", []) if hasattr(p, "page_no")})
-    img_entries = get_table_images(table)
-    image_paths = [e["image_path"] for e in img_entries if "image_path" in e]
+    if manifest_image_paths is not None:
+        image_paths = list(manifest_image_paths)
+    else:
+        img_entries = get_table_images(table)
+        image_paths = [e["image_path"] for e in img_entries if "image_path" in e]
 
-    return TableBlock(
+    empty_cols = find_empty_columns(
+        headers,
+        data_rows,
+        col_empty_threshold=col_empty_threshold,
+        min_rows=min_rows_for_col_check,
+    )
+
+    block = TableBlock(
         headers=headers,
         rows=data_rows,
         title=title,
@@ -265,22 +358,38 @@ def extract_table_block_from_docling(
         image_paths=image_paths,
         table_index=table_index,
         self_ref=getattr(table, "self_ref", None),
-        row_start=1,
+        row_start=1 if data_rows else 0,
         row_end=len(data_rows),
         total_rows=len(data_rows),
         part=1,
         total_parts=1,
+        empty_columns=empty_cols,
     )
+    block.table_possibly_incomplete = block.is_possibly_incomplete(
+        empty_ratio_threshold=empty_ratio_threshold,
+        col_empty_threshold=col_empty_threshold,
+        min_rows_for_col_check=min_rows_for_col_check,
+    )
+    return block
 
 
 def split_large_table(table: TableBlock, max_rows: int = 25) -> list[TableBlock]:
-    """Divide una tabella lunga per righe, ripetendo titolo e header delle colonne in ogni chunk."""
+    """Divide una tabella lunga per righe, ripetendo titolo e header delle colonne in ogni chunk
+    e propagando a tutte le parti i flag di completezza calcolati sull'intera tabella.
+    """
+    full_ratio = table.empty_cells_ratio
+    full_empty_cols = list(table.empty_columns) if table.empty_columns is not None else []
+    full_incomplete = table.table_possibly_incomplete
+
     if max_rows <= 0 or len(table.rows) <= max_rows:
         table.row_start = 1 if table.rows else 0
         table.row_end = len(table.rows)
         table.total_rows = len(table.rows)
         table.part = 1
         table.total_parts = 1
+        table.table_empty_cells_ratio = full_ratio
+        table.empty_columns = full_empty_cols
+        table.table_possibly_incomplete = full_incomplete
         return [table]
 
     total_rows = len(table.rows)
@@ -306,6 +415,9 @@ def split_large_table(table: TableBlock, max_rows: int = 25) -> list[TableBlock]
                 total_rows=total_rows,
                 part=part_idx,
                 total_parts=total_parts,
+                table_empty_cells_ratio=full_ratio,
+                empty_columns=list(full_empty_cols),
+                table_possibly_incomplete=full_incomplete,
             )
         )
 
@@ -338,7 +450,6 @@ def extract_caption(lines: list[str], table_start: int) -> str | None:
     prev_line = lines[idx].strip()
     if prev_line.startswith("|") or prev_line.startswith("#"):
         return None
-    # Rimuovi eventuale formattazione bold "**Tabella: ...**"
     cleaned = re.sub(r"^\*\*|\*\*$", "", prev_line).strip()
     cleaned = re.sub(r"^Tabella:\s*", "", cleaned, flags=re.IGNORECASE).strip()
     if 0 < len(cleaned) <= 180:
