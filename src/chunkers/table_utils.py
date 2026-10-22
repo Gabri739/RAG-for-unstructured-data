@@ -1,41 +1,354 @@
-"""Utilities for detecting and handling Markdown tables."""
+"""Utilities per l'estrazione, normalizzazione e suddivisione per righe delle tabelle.
+
+Supporta sia:
+  1. `TableItem` di un `DoclingDocument` (con recupero di `pages`, `image_paths` da
+     `table.meta["rag__table_images"]`, didascalie, banner di titolo e note).
+  2. Tabelle già esportate in testo Markdown.
+
+Per le tabelle lunghe (`len(rows) > max_rows`), `split_large_table` divide le righe dati
+in blocchi di massimo `max_rows` righe ciascuno, ripetendo in ogni blocco:
+  - il titolo/didascalia della tabella (con indicazione `Parte k/N, righe A-B di TOT`)
+  - l'intestazione completa delle colonne (`headers`).
+"""
+
+from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from src.extractors.table_images import get_table_images
+
+if TYPE_CHECKING:
+    from docling_core.types.doc import DoclingDocument, TableItem
 
 
 @dataclass
 class TableBlock:
-    """Represents a detected table in Markdown."""
-    headers: List[str]
-    rows: List[List[str]]
-    raw_lines: List[str]
-    start_line: int
-    end_line: int
-    caption: Optional[str] = None  # Text immediately before table
+    """Rappresenta una tabella (o una porzione di righe di una tabella lunga) pronta per il chunking."""
+
+    headers: list[str]
+    rows: list[list[str]]
+    title: str | None = None
+    footnotes: list[str] = field(default_factory=list)
+    pages: list[int] = field(default_factory=list)
+    image_paths: list[str] = field(default_factory=list)
+    table_index: int | None = None
+    self_ref: str | None = None
+    start_line: int = 0
+    end_line: int = 0
+    row_start: int = 1
+    row_end: int = 0
+    total_rows: int = 0
+    part: int = 1
+    total_parts: int = 1
+
+    def __post_init__(self) -> None:
+        if self.total_rows == 0:
+            self.total_rows = len(self.rows)
+        if self.row_end == 0:
+            self.row_end = len(self.rows)
+
+    @property
+    def caption(self) -> str | None:
+        """Alias retro-compatibile per `title`."""
+        return self.title
 
     @property
     def is_valid(self) -> bool:
-        """Check if table has valid structure."""
+        """Verifica se la tabella contiene almeno un'intestazione e una riga."""
         return len(self.headers) > 0 and len(self.rows) > 0
 
-    def to_markdown(self) -> str:
-        """Convert back to Markdown format."""
+    @property
+    def total_cells_count(self) -> int:
+        """Numero totale di celle dati nel blocco."""
+        return len(self.rows) * len(self.headers) if self.headers else 0
+
+    @property
+    def empty_cells_count(self) -> int:
+        """Numero di celle dati vuote nel blocco."""
+        if not self.headers:
+            return 0
+        n_cols = len(self.headers)
+        empty = 0
+        for row in self.rows:
+            for c_idx in range(n_cols):
+                val = row[c_idx].strip() if c_idx < len(row) else ""
+                if val == "":
+                    empty += 1
+        return empty
+
+    @property
+    def empty_cells_ratio(self) -> float:
+        """Frazione di celle dati vuote (0.0 - 1.0)."""
+        tot = self.total_cells_count
+        if tot == 0:
+            return 1.0
+        return round(self.empty_cells_count / tot, 4)
+
+    def is_possibly_incomplete(self, empty_ratio_threshold: float = 0.35) -> bool:
+        """Restituisce True se la tabella ha troppe celle vuote o nessuna riga dati."""
+        if not self.rows or not self.headers:
+            return True
+        return self.empty_cells_ratio >= empty_ratio_threshold
+
+    def format_title_line(self) -> str | None:
+        """Formatta la riga del titolo della tabella (includendo eventuale Parte k/N)."""
+        part_info = (
+            f" (Parte {self.part}/{self.total_parts}, righe {self.row_start}-{self.row_end} di {self.total_rows})"
+            if self.total_parts > 1
+            else ""
+        )
+        if self.title:
+            return f"**Tabella: {self.title}{part_info}**"
+        if part_info:
+            return f"**Tabella{part_info}**"
+        return None
+
+    def to_markdown_table(self) -> str:
+        """Restituisce solo la griglia Markdown (`| header |` + `| --- |` + righe dati)."""
         if not self.headers:
             return ""
-        header_line = "| " + " | ".join(self.headers) + " |"
-        separator = "|" + "|".join([" --- " for _ in self.headers]) + "|"
-        rows = ["| " + " | ".join(row) + " |" for row in self.rows]
-        return "\n".join([header_line, separator] + rows)
+        n_cols = len(self.headers)
+        clean_headers = [h.replace("\n", " ").strip() for h in self.headers]
+        header_line = "| " + " | ".join(clean_headers) + " |"
+        separator_line = "| " + " | ".join("---" for _ in range(n_cols)) + " |"
+
+        row_lines: list[str] = []
+        for row in self.rows:
+            padded = [(row[j] if j < len(row) else "").replace("\n", " ").strip() for j in range(n_cols)]
+            row_lines.append("| " + " | ".join(padded) + " |")
+
+        return "\n".join([header_line, separator_line] + row_lines)
+
+    def to_markdown(self, *, include_title: bool = True, include_footnotes: bool = True) -> str:
+        """Converte il blocco tabella in Markdown completo di titolo e note."""
+        parts: list[str] = []
+        if include_title:
+            title_line = self.format_title_line()
+            if title_line:
+                parts.append(title_line)
+
+        md_grid = self.to_markdown_table()
+        if md_grid:
+            parts.append(md_grid)
+
+        if include_footnotes and self.footnotes:
+            parts.append("\n".join(f"> Nota: {fn}" for fn in self.footnotes))
+
+        return "\n\n".join(parts)
 
 
-def parse_table(lines: List[str], start_idx: int) -> Optional[TableBlock]:
-    """Parse a table starting at given line index.
-
-    Returns TableBlock if valid table found, None otherwise.
+def _strip_common_banner_prefix(headers: list[str]) -> tuple[str | None, list[str]]:
+    """Se tutte le colonne iniziano con lo stesso prefisso `'BANNER - Colonna'` (tipico di
+    Docling quando la riga 0 è un titolo unificato su tutte le colonne), separa il banner
+    dall'intestazione delle singole colonne.
     """
-    table_lines = []
+    if len(headers) < 2:
+        return None, headers
+
+    split_parts = [h.split(" - ", 1) for h in headers]
+    if not all(len(sp) == 2 and sp[0].strip() and sp[1].strip() for sp in split_parts):
+        return None, headers
+
+    first_prefix = split_parts[0][0].strip()
+    if all(sp[0].strip() == first_prefix for sp in split_parts):
+        return first_prefix, [sp[1].strip() for sp in split_parts]
+
+    return None, headers
+
+
+def _combine_titles(caption: str | None, banner: str | None, fallback: str | None = None) -> str | None:
+    """Unisce caption esterna e banner interno senza duplicazioni."""
+    pieces: list[str] = []
+    for candidate in (caption, banner):
+        if not candidate:
+            continue
+        c_clean = re.sub(r"\s+", " ", candidate).strip()
+        if not c_clean:
+            continue
+        if not any(c_clean.lower() in existing.lower() or existing.lower() in c_clean.lower() for existing in pieces):
+            pieces.append(c_clean)
+
+    if pieces:
+        return " — ".join(pieces)
+
+    if fallback:
+        fb_clean = re.sub(r"^#+\s*", "", fallback).strip()
+        return fb_clean or None
+
+    return None
+
+
+def extract_table_block_from_docling(
+    table: TableItem,
+    doc: DoclingDocument,
+    *,
+    table_index: int | None = None,
+    fallback_title: str | None = None,
+) -> TableBlock:
+    """Estrae un `TableBlock` strutturato da un `TableItem` di Docling."""
+    grid = table.data.grid
+    rows_text: list[list[str]] = []
+    row_is_header: list[bool] = []
+
+    for row in grid:
+        rows_text.append([re.sub(r"\s+", " ", c.text).strip() for c in row])
+        row_is_header.append(any(c.column_header for c in row))
+
+    banner_title: str | None = None
+
+    # 1. Rileva se la riga 0 è un banner di titolo a tutta larghezza
+    if len(rows_text) >= 2:
+        r0_non_empty = [c for c in rows_text[0] if c]
+        r1_non_empty = [c for c in rows_text[1] if c]
+        is_r0_banner = (
+            len(r0_non_empty) == 1 and rows_text[0][0] != "" and len(rows_text[0]) > 1
+        ) or (
+            len(r0_non_empty) > 1 and len(set(r0_non_empty)) == 1
+        )
+        if is_r0_banner and len(r1_non_empty) >= 2:
+            banner_title = r0_non_empty[0]
+            rows_text = rows_text[1:]
+            row_is_header = row_is_header[1:]
+
+    # 2. Costruisci l'intestazione delle colonne e separa le righe dati
+    num_cols = table.data.num_cols or (len(rows_text[0]) if rows_text else 0)
+    header_rows: list[list[str]] = []
+    data_rows: list[list[str]] = []
+
+    for r_text, is_hdr in zip(rows_text, row_is_header):
+        if is_hdr and not data_rows:
+            header_rows.append(r_text)
+        else:
+            data_rows.append(r_text)
+
+    # Fallback: se nessuna riga ha column_header=True, usa la prima riga come header
+    if not header_rows and data_rows:
+        header_rows = [data_rows[0]]
+        data_rows = data_rows[1:]
+
+    headers: list[str] = []
+    for col_idx in range(num_cols):
+        col_parts: list[str] = []
+        for h_row in header_rows:
+            val = h_row[col_idx].strip() if col_idx < len(h_row) else ""
+            if val and (not col_parts or val != col_parts[-1]):
+                col_parts.append(val)
+        headers.append(" - ".join(col_parts) if col_parts else f"Colonna {col_idx + 1}")
+
+    prefix_banner, headers = _strip_common_banner_prefix(headers)
+    if prefix_banner and not banner_title:
+        banner_title = prefix_banner
+
+    # 3. Estrai caption, footnotes, pagine e percorsi immagini
+    caption_str = table.caption_text(doc).strip() if hasattr(table, "caption_text") else ""
+    title = _combine_titles(caption_str, banner_title, fallback_title)
+
+    footnotes: list[str] = []
+    for fn_ref in getattr(table, "footnotes", []):
+        fn_item = fn_ref.resolve(doc) if hasattr(fn_ref, "resolve") else None
+        fn_text = getattr(fn_item, "text", "").strip() if fn_item is not None else ""
+        if fn_text:
+            footnotes.append(fn_text)
+
+    pages = sorted({p.page_no for p in getattr(table, "prov", []) if hasattr(p, "page_no")})
+    img_entries = get_table_images(table)
+    image_paths = [e["image_path"] for e in img_entries if "image_path" in e]
+
+    return TableBlock(
+        headers=headers,
+        rows=data_rows,
+        title=title,
+        footnotes=footnotes,
+        pages=pages,
+        image_paths=image_paths,
+        table_index=table_index,
+        self_ref=getattr(table, "self_ref", None),
+        row_start=1,
+        row_end=len(data_rows),
+        total_rows=len(data_rows),
+        part=1,
+        total_parts=1,
+    )
+
+
+def split_large_table(table: TableBlock, max_rows: int = 25) -> list[TableBlock]:
+    """Divide una tabella lunga per righe, ripetendo titolo e header delle colonne in ogni chunk."""
+    if max_rows <= 0 or len(table.rows) <= max_rows:
+        table.row_start = 1 if table.rows else 0
+        table.row_end = len(table.rows)
+        table.total_rows = len(table.rows)
+        table.part = 1
+        table.total_parts = 1
+        return [table]
+
+    total_rows = len(table.rows)
+    total_parts = (total_rows + max_rows - 1) // max_rows
+    chunks: list[TableBlock] = []
+
+    for part_idx, start in enumerate(range(0, total_rows, max_rows), start=1):
+        slice_rows = table.rows[start : start + max_rows]
+        chunks.append(
+            TableBlock(
+                headers=list(table.headers),
+                rows=slice_rows,
+                title=table.title,
+                footnotes=list(table.footnotes),
+                pages=list(table.pages),
+                image_paths=list(table.image_paths),
+                table_index=table.table_index,
+                self_ref=table.self_ref,
+                start_line=table.start_line,
+                end_line=table.end_line,
+                row_start=start + 1,
+                row_end=start + len(slice_rows),
+                total_rows=total_rows,
+                part=part_idx,
+                total_parts=total_parts,
+            )
+        )
+
+    return chunks
+
+
+def _parse_md_row(line: str) -> list[str]:
+    """Estrae le celle da una riga di tabella Markdown `| a | b | c |`."""
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [c.strip() for c in stripped.split("|")]
+
+
+def _is_separator_row(cells: list[str]) -> bool:
+    """Verifica se una riga di tabella Markdown è il separatore `| --- | :---: |`."""
+    return bool(cells) and all(bool(re.match(r"^:?-{2,}:?$", c.strip())) for c in cells if c.strip())
+
+
+def extract_caption(lines: list[str], table_start: int) -> str | None:
+    """Estrae un eventuale titolo/didascalia immediatamente sopra una tabella Markdown."""
+    idx = table_start - 1
+    while idx >= 0 and not lines[idx].strip():
+        idx -= 1
+    if idx < 0:
+        return None
+
+    prev_line = lines[idx].strip()
+    if prev_line.startswith("|") or prev_line.startswith("#"):
+        return None
+    # Rimuovi eventuale formattazione bold "**Tabella: ...**"
+    cleaned = re.sub(r"^\*\*|\*\*$", "", prev_line).strip()
+    cleaned = re.sub(r"^Tabella:\s*", "", cleaned, flags=re.IGNORECASE).strip()
+    if 0 < len(cleaned) <= 180:
+        return cleaned
+    return None
+
+
+def parse_table(lines: list[str], start_idx: int) -> TableBlock | None:
+    """Analizza una tabella Markdown a partire dalla riga `start_idx`."""
+    table_lines: list[str] = []
     end_idx = start_idx
 
     for i in range(start_idx, len(lines)):
@@ -43,135 +356,57 @@ def parse_table(lines: List[str], start_idx: int) -> Optional[TableBlock]:
         if line.startswith("|"):
             table_lines.append(line)
             end_idx = i
-        elif line == "" and table_lines:
-            # Empty line after table - end of table
-            break
-        elif table_lines:
-            # Non-table line after table started - stop
+        else:
             break
 
     if len(table_lines) < 2:
         return None
 
-    # Parse header
-    headers = [h.strip() for h in table_lines[0].split("|") if h.strip()]
-    if not headers:
+    raw_headers = _parse_md_row(table_lines[0])
+    if not raw_headers or not any(raw_headers):
         return None
 
-    # Skip separator line (line 1)
-    # Parse data rows
-    rows = []
-    for line in table_lines[2:]:
-        cells = [c.strip() for c in line.split("|") if c.strip() or c == ""]
-        # Pad with empty strings if needed
-        while len(cells) < len(headers):
-            cells.append("")
-        if cells:
-            rows.append(cells[:len(headers)])
+    data_start_idx = 2 if _is_separator_row(_parse_md_row(table_lines[1])) else 1
+    banner_title, headers = _strip_common_banner_prefix(raw_headers)
+    n_cols = len(headers)
+
+    rows: list[list[str]] = []
+    for line in table_lines[data_start_idx:]:
+        cells = _parse_md_row(line)
+        if _is_separator_row(cells):
+            continue
+        if len(cells) < n_cols:
+            cells.extend([""] * (n_cols - len(cells)))
+        rows.append(cells[:n_cols])
+
+    caption = extract_caption(lines, start_idx)
+    title = _combine_titles(caption, banner_title)
 
     return TableBlock(
         headers=headers,
         rows=rows,
-        raw_lines=table_lines,
+        title=title,
         start_line=start_idx,
-        end_line=end_idx
+        end_line=end_idx,
+        row_start=1 if rows else 0,
+        row_end=len(rows),
+        total_rows=len(rows),
     )
 
 
-def extract_caption(lines: List[str], table_start: int) -> Optional[str]:
-    """Extract caption text immediately before a table."""
-    if table_start == 0:
-        return None
-
-    prev_line = lines[table_start - 1].strip()
-    if prev_line and not prev_line.startswith("|") and not prev_line.startswith("#"):
-        return prev_line
-    return None
-
-
-def find_all_tables(content: str) -> List[TableBlock]:
-    """Find all tables in Markdown content."""
+def find_all_tables(content: str) -> list[TableBlock]:
+    """Individua tutte le tabelle in una stringa Markdown."""
     lines = content.split("\n")
-    tables = []
+    tables: list[TableBlock] = []
     i = 0
 
     while i < len(lines):
-        line = lines[i].strip()
-        if line.startswith("|"):
+        if lines[i].strip().startswith("|"):
             table = parse_table(lines, i)
-            if table:
-                table.caption = extract_caption(lines, i)
+            if table is not None:
                 tables.append(table)
                 i = table.end_line + 1
                 continue
         i += 1
 
     return tables
-
-
-def are_tables_continuation(table1: TableBlock, table2: TableBlock) -> bool:
-    """Check if table2 is a continuation of table1.
-
-    Heuristics:
-    - Same number of columns
-    - Headers match or table2 has generic headers (A, B, C...) or empty
-    - Similar data patterns
-    """
-    # Must have same number of columns
-    if len(table1.headers) != len(table2.headers):
-        return False
-
-    # Check if headers match exactly
-    if table1.headers == table2.headers:
-        return True
-
-    # Check if table2 headers are generic/placeholder
-    generic_patterns = [
-        r"^[A-Z]$",  # Single letters
-        r"^\d+$",    # Numbers only
-        r"^[\-\s]+$" # Dashes/spaces
-    ]
-    is_generic = all(
-        any(re.match(p, h) for p in generic_patterns)
-        for h in table2.headers
-    )
-
-    if is_generic:
-        return True
-
-    # Check similarity: at least 50% headers match
-    matching = sum(1 for h1, h2 in zip(table1.headers, table2.headers) if h1 == h2)
-    return matching >= len(table1.headers) * 0.5
-
-
-def merge_tables(table1: TableBlock, table2: TableBlock) -> TableBlock:
-    """Merge two table blocks into one."""
-    return TableBlock(
-        headers=table1.headers,  # Keep original headers
-        rows=table1.rows + table2.rows,
-        raw_lines=table1.raw_lines + table2.raw_lines,
-        start_line=table1.start_line,
-        end_line=table2.end_line,
-        caption=table1.caption or table2.caption
-    )
-
-
-def split_large_table(table: TableBlock, max_rows: int = 50) -> List[TableBlock]:
-    """Split a large table into smaller chunks with repeated headers."""
-    if len(table.rows) <= max_rows:
-        return [table]
-
-    chunks = []
-    for i in range(0, len(table.rows), max_rows):
-        chunk_rows = table.rows[i:i + max_rows]
-        chunk = TableBlock(
-            headers=table.headers,
-            rows=chunk_rows,
-            raw_lines=[],  # Will be regenerated
-            start_line=table.start_line,
-            end_line=table.end_line,
-            caption=f"{table.caption} (Part {i // max_rows + 1})" if table.caption else f"Part {i // max_rows + 1}"
-        )
-        chunks.append(chunk)
-
-    return chunks

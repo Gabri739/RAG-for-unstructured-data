@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test completo del MarkdownChunker con vari casi edge."""
+"""Test completi del MarkdownChunker (Markdown + DoclingDocument)."""
 
 import sys
 from pathlib import Path
@@ -9,237 +9,125 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.chunkers import MarkdownChunker  # noqa: E402
 
 
-def test_basic_headers():
-    """Test base: header splitting semplice."""
-    print("\n" + "="*60)
-    print("TEST 1: Header splitting base")
-    print("="*60)
+def test_header_hierarchy():
+    """Verifica che lo stack delle intestazioni (# -> ## -> ###) venga mantenuto in ogni chunk."""
+    md = """# Bilancio di Sostenibilità 2023
 
-    md = """# Documento Principale
+## Capitolo 1: Governance
+Testo introduttivo sulla governance aziendale.
 
-## Introduzione
-Questo è il testo di introduzione.
+### 1.1 Consiglio di Amministrazione
+Dettagli sul CdA.
 
-## Capitolo 1
-Contenuto del capitolo 1.
-
-### Sezione 1.1
-Dettagli della sezione.
-
-## Capitolo 2
-Contenuto finale.
+## Capitolo 2: Fornitori
+Analisi della catena di fornitura.
 """
-
     chunker = MarkdownChunker(headers_to_split_on=["#", "##", "###"])
     chunks = chunker.chunk(md)
 
-    print(f"Chunk generati: {len(chunks)}")
-    for i, c in enumerate(chunks, 1):
-        print(f"  {i}. {c.chunk_type}: {c.headers}")
+    assert len(chunks) == 3
+    assert chunks[0].headers == ["# Bilancio di Sostenibilità 2023", "## Capitolo 1: Governance"]
+    assert chunks[1].headers == [
+        "# Bilancio di Sostenibilità 2023",
+        "## Capitolo 1: Governance",
+        "### 1.1 Consiglio di Amministrazione",
+    ]
+    assert chunks[2].headers == ["# Bilancio di Sostenibilità 2023", "## Capitolo 2: Fornitori"]
+    print("[OK] test_header_hierarchy")
 
-    assert len(chunks) >= 3, "Dovrebbe generare almeno 3 chunk"
-    print("[OK] PASS")
 
+def test_long_table_row_splitting_repeats_header_and_title():
+    """Verifica che una tabella lunga venga divisa per righe con header e titolo ripetuti in ogni chunk."""
+    rows_md = "\n".join(f"| Fornitore {i} | Italia | {i * 100} |" for i in range(1, 13))
+    md = f"""# Approvvigionamenti
 
-def test_single_page_table():
-    """Test tabella su singola pagina."""
-    print("\n" + "="*60)
-    print("TEST 2: Tabella singola pagina")
-    print("="*60)
+## [GRI 204-1]
 
-    md = """# Report Vendite
+Elenco fornitori principali 2023
 
-Dati delle vendite Q1.
-
-| Prodotto | Q1 | Q2 |
-|----------|----|----|
-| A        | 10 | 20 |
-| B        | 15 | 25 |
-
-Fine report.
+| Ragione Sociale | Paese | Importo (Euro) |
+|---|---|---|
+{rows_md}
 """
-
-    chunker = MarkdownChunker(preserve_tables=True)
+    chunker = MarkdownChunker(max_table_rows=5)
     chunks = chunker.chunk(md)
-
-    print(f"Chunk generati: {len(chunks)}")
-    for i, c in enumerate(chunks, 1):
-        print(f"  {i}. {c.chunk_type}: {len(c.content)} chars")
-        if c.chunk_type == "table":
-            print(f"     Righe: {c.metadata.get('row_count')}, Colonne: {c.metadata.get('column_count')}")
 
     table_chunks = [c for c in chunks if c.chunk_type == "table"]
-    assert len(table_chunks) == 1, "Dovrebbe esserci 1 chunk tabella"
-    assert table_chunks[0].metadata['row_count'] == 2, "Tabella dovrebbe avere 2 righe"
-    print("[OK] PASS")
+    assert len(table_chunks) == 3, f"Attesi 3 chunk per 12 righe con max_table_rows=5, trovati {len(table_chunks)}"
+
+    expected_ranges = ["1-5", "6-10", "11-12"]
+    for idx, tc in enumerate(table_chunks, start=1):
+        # 1. Ogni chunk ripete le intestazioni di sezione
+        assert "# Approvvigionamenti" in tc.content
+        assert "## [GRI 204-1]" in tc.content
+        # 2. Ogni chunk ripete il titolo della tabella con Parte k/N
+        assert "Elenco fornitori principali 2023" in tc.content
+        assert f"Parte {idx}/3" in tc.content
+        # 3. Ogni chunk ripete l'header delle colonne
+        assert "| Ragione Sociale | Paese | Importo (Euro) |" in tc.content
+        assert tc.metadata["part"] == idx
+        assert tc.metadata["total_parts"] == 3
+        assert tc.metadata["row_range"] == expected_ranges[idx - 1]
+        assert tc.metadata["total_table_rows"] == 12
+        assert tc.metadata["possible_incomplete_table"] is False
+
+    print("[OK] test_long_table_row_splitting_repeats_header_and_title")
 
 
-def test_multi_page_table():
-    """Test tabella che continua su più pagine (CASO CRITICO)."""
-    print("\n" + "="*60)
-    print("TEST 3: Tabella multi-pagina (CASO CRITICO)")
-    print("="*60)
+def test_incomplete_table_flag():
+    """Verifica il flag possible_incomplete_table quando molte celle sono vuote."""
+    md = """# Sezione Test
 
-    md = """# Bilancio 2024
+Tabella con dati mancanti
 
-## Dati Finanziari
-
-| Account | Importo |
-|---------|---------|
-| Vendite | 1000    |
-| Costi   | 500     |
-
-Testo intermedio tra le tabelle.
-
-| Account | Importo |
-|---------|---------|
-| Marketing | 200   |
-| IT        | 100   |
-
-## Note
-Conclusioni del bilancio.
+| Col A | Col B | Col C | Col D |
+|---|---|---|---|
+| X | | | |
+| Y | | | |
 """
-
-    chunker = MarkdownChunker(preserve_tables=True)
+    chunker = MarkdownChunker(empty_cells_threshold=0.35)
     chunks = chunker.chunk(md)
-
-    print(f"Chunk generati: {len(chunks)}")
-    for i, c in enumerate(chunks, 1):
-        print(f"  {i}. {c.chunk_type}: {c.content[:80]}...")
-
-    # Qui ci sono 2 tabelle separate (non continuation perché headers match esattamente)
-    # Ma dovrebbero essere chunk separati
     table_chunks = [c for c in chunks if c.chunk_type == "table"]
-    print(f"     Tabelle trovate: {len(table_chunks)}")
+    assert len(table_chunks) == 1
+    assert table_chunks[0].metadata["possible_incomplete_table"] is True
+    assert table_chunks[0].metadata["empty_cells_ratio"] == 0.75
+    print("[OK] test_incomplete_table_flag")
 
 
-def test_continuation_table():
-    """Test tabella che continua (stessi headers, righe diverse pagine)."""
-    print("\n" + "="*60)
-    print("TEST 4: Tabella continuation (stessi headers)")
-    print("="*60)
+def test_docling_document_chunking():
+    """Verifica chunk_document() sul documento Docling reale (se presente)."""
+    doc_path = Path("data/processed/docling/dnf2023_test_p43_44/document_images.json")
+    if not doc_path.exists():
+        print("[SKIP] test_docling_document_chunking (file non presente)")
+        return
 
-    md = """# Estratto Conto
+    from docling_core.types.doc import DoclingDocument
 
-| Data | Descrizione | Importo |
-|------|-------------|---------|
-| 01/01 | Saldo iniziale | 1000 |
-| 02/01 | Pagamento | -100 |
+    doc = DoclingDocument.load_from_json(doc_path)
+    # Testiamo sia con max_table_rows=25 (tabelle intere) sia con max_table_rows=4 (split per righe)
+    chunker = MarkdownChunker(max_table_rows=4)
+    chunks = chunker.chunk_document(doc)
 
-Altre operazioni:
-
-| Data | Descrizione | Importo |
-|------|-------------|---------|
-| 03/01 | Versamento | 500 |
-| 04/01 | Prelievo | -200 |
-
-Totale: 1200
-"""
-
-    chunker = MarkdownChunker(preserve_tables=True)
-    chunks = chunker.chunk(md)
-
-    print(f"Chunk generati: {len(chunks)}")
-    for i, c in enumerate(chunks, 1):
-        print(f"  {i}. {c.chunk_type}: {c.headers}")
-        if c.chunk_type == "table":
-            print(f"     Righe: {c.metadata.get('row_count')}")
-
-    # Con headers identici dovrebbe unire le tabelle
     table_chunks = [c for c in chunks if c.chunk_type == "table"]
-    if table_chunks:
-        # Se unisce, dovrebbe avere 4 righe totali
-        rows = table_chunks[0].metadata.get('row_count', 0)
-        print(f"     Tabella finale: {rows} righe")
-        if rows == 4:
-            print("[OK] Tabelle unite correttamente!")
-        else:
-            print(f"⚠️  Tabelle separate ({rows} righe vs 4 attese)")
+    assert len(table_chunks) == 4  # T0 (8 righe -> 2 parti da 4) + T1 (7 righe -> 2 parti: 4 + 3)
 
+    # Verifica che T1 (multi-pagina 43-44) abbia pages=[43, 44] e 2 image_paths in ogni suo sotto-chunk
+    t1_chunks = [c for c in table_chunks if c.metadata["table_index"] == 1]
+    assert len(t1_chunks) == 2
+    for idx, tc in enumerate(t1_chunks, start=1):
+        assert tc.metadata["pages"] == [43, 44]
+        assert tc.metadata["page_range"] == "43-44"
+        assert tc.metadata["image_paths"] == ["table_images/t1_p43.png", "table_images/t1_p44.png"]
+        assert "% DEL VALORE EROGATO PER TIPOLOGIA DI FORNITURA" in tc.content
+        assert "| Tipologia | Valore % 2021 | Valore % 2022 | Valore % 2023 |" in tc.content
+        assert f"Parte {idx}/2" in tc.content
 
-def test_large_text_splitting():
-    """Test splitting di testo molto lungo."""
-    print("\n" + "="*60)
-    print("TEST 5: Testo lungo con split")
-    print("="*60)
-
-    # Genera testo lungo
-    paragraphs = [f"Paragrafo numero {i} con abbastanza testo da superare il limite di dimensione. " * 10
-                  for i in range(20)]
-    md = "# Documento Lungo\n\n" + "\n\n".join(paragraphs)
-
-    chunker = MarkdownChunker(chunk_size=1000, chunk_overlap=100)
-    chunks = chunker.chunk(md)
-
-    print(f"Dimensione totale: {len(md)} caratteri")
-    print(f"Chunk generati: {len(chunks)}")
-
-    # Verifica che ci sia almeno un chunk splittato
-    split_chunks = [c for c in chunks if c.metadata.get('total_parts', 1) > 1]
-    if split_chunks:
-        print(f"[OK] Chunk splittati: {len(split_chunks)}")
-        for c in split_chunks[:2]:  # Mostra primi 2
-            print(f"   Parte {c.metadata['part']}/{c.metadata['total_parts']}: {len(c.content)} chars")
-    else:
-        print("ℹ️  Nessuno split necessario (testo rientra nel limite)")
-
-
-def test_real_document():
-    """Test con documento reale del progetto."""
-    print("\n" + "="*60)
-    print("TEST 6: Documento reale (output.md)")
-    print("="*60)
-
-    try:
-        with open('data/raw/20260513_121255/output.md', 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        print(f"Dimensione: {len(content)} caratteri, {len(content.splitlines())} righe")
-
-        chunker = MarkdownChunker(
-            headers_to_split_on=["#", "##", "###"],
-            chunk_size=2000,
-            preserve_tables=True
-        )
-        chunks = chunker.chunk(content)
-
-        print(f"Chunk generati: {len(chunks)}")
-
-        text_chunks = len([c for c in chunks if c.chunk_type == "text"])
-        table_chunks = len([c for c in chunks if c.chunk_type == "table"])
-
-        print(f"  - Testo: {text_chunks}")
-        print(f"  - Tabelle: {table_chunks}")
-
-        # Mostra primi 3 chunk
-        for c in chunks[:3]:
-            print(f"\n  {c.chunk_type.upper()}: {c.headers}")
-            preview = c.content[:150].replace('\n', ' ')
-            print(f"     {preview}...")
-
-        print("\n[OK] Documento processato correttamente!")
-
-    except FileNotFoundError:
-        print("⚠️  File non trovato, salto test")
-
-
-def main():
-    """Esegue tutti i test."""
-    print("="*60)
-    print("TEST COMPRENSIVI MARKDOWN CHUNKER")
-    print("="*60)
-
-    test_basic_headers()
-    test_single_page_table()
-    test_multi_page_table()
-    test_continuation_table()
-    test_large_text_splitting()
-    test_real_document()
-
-    print("\n" + "="*60)
-    print("TUTTI I TEST COMPLETATI")
-    print("="*60)
+    print("[OK] test_docling_document_chunking")
 
 
 if __name__ == "__main__":
-    main()
+    test_header_hierarchy()
+    test_long_table_row_splitting_repeats_header_and_title()
+    test_incomplete_table_flag()
+    test_docling_document_chunking()
+    print("\nTUTTI I TEST SUPERATI!")
