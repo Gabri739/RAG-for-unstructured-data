@@ -1,0 +1,74 @@
+[
+  {
+    "id": "Q01",
+    "question": "Di quante imprese fornitrici si è avvalso il Gruppo Sara nel 2023 e per quale valore economico complessivo secondo l'indicatore GRI 204-1?",
+    "expected_type": "text",
+    "expected_pages": [43],
+    "expected_keywords": ["694", "47.767.897"],
+    "expected_answer": "Nel 2023 il Gruppo si è avvalso di 694 imprese fornitrici per un valore economico complessivo di 47.767.897 euro (circa il 94,60% della spesa in Italia)."
+  },
+  {
+    "id": "Q02",
+    "question": "Quali certificazioni ambientali e di sicurezza sul lavoro sono indicate tra i parametri ESG per la qualificazione nel nuovo Albo fornitori?",
+    "expected_type": "text",
+    "expected_pages": [43],
+    "expected_keywords": ["14001", "OHSAS 18001"],
+    "expected_answer": "Certificazione ambientale UNI EN ISO 14001 o EMAS (o equivalenti) e certificazione per la sicurezza sul lavoro OHSAS 18001 (o equivalente)."
+  },
+  {
+    "id": "Q03",
+    "question": "Qual è il numero di fornitori, la spesa in Euro e la percentuale di spesa nell'area geografica Nord-Ovest nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [43],
+    "expected_keywords": ["25.067.024", "52,48%"],
+    "expected_answer": "Nel 2023 l'area Nord-Ovest conta 251 fornitori per una spesa di 25.067.024 Euro, pari al 52,48% della spesa totale."
+  },
+  {
+    "id": "Q04",
+    "question": "Qual è il totale Italia della spesa fornitori nel 2023 e quanti fornitori sono localizzati al Sud e all'Estero?",
+    "expected_type": "table",
+    "expected_pages": [43],
+    "expected_keywords": ["45.188.018", "94,60%"],
+    "expected_answer": "Nel 2023 il Totale Italia è di 653 fornitori per 45.188.018 Euro (94,60% della spesa); al Sud ci sono 64 fornitori (648.799 Euro, 1,36%) e all'Estero 41 fornitori (2.579.879 Euro, 5,40%)."
+  },
+  {
+    "id": "Q05",
+    "question": "Qual è la percentuale del valore erogato ai fornitori per Beni marketing e per Cespiti/investimenti nel triennio 2021-2023?",
+    "expected_type": "table",
+    "expected_pages": [43, 44],
+    "expected_keywords": ["Beni marketing", "16,2%", "12,6%"],
+    "expected_answer": "Per Beni marketing: 15,4% (2021), 15,8% (2022), 16,2% (2023). Per Cespiti/investimenti: 18,5% (2021), 17,0% (2022), 12,6% (2023)."
+  },
+  {
+    "id": "Q06",
+    "question": "Qual è la percentuale del valore erogato per Consulenze e per Prestazione servizi nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [43, 44],
+    "expected_keywords": ["Consulenze", "7,6%", "60,2%"],
+    "expected_answer": "Nel 2023 la quota per Consulenze è pari al 7,6% (8,1% nel 2021, 8,3% nel 2022) e quella per Prestazione servizi è pari al 60,2% (54,8% nel 2021, 56,1% nel 2022)."
+  },
+  {
+    "id": "Q07",
+    "question": "Quanto ha investito il Gruppo Sara in criptovalute nel 2023?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: Sara Assicurazioni non ha investito in criptovalute (la domanda non deve produrre falsi positivi sopra soglia)."
+  },
+  {
+    "id": "Q08",
+    "question": "Cosa riporta l'indicatore GRI 204-1 sui fornitori del Gruppo?",
+    "expected_type": "any",
+    "expected_pages": [43, 44],
+    "expected_keywords": ["GRI 204-1"],
+    "expected_answer": "Riporta che nel 2023 il Gruppo si è avvalso di 694 imprese fornitrici per 47.767.897 euro (94,60% della spesa in Italia), oltre alle tabelle sulla ripartizione geografica e per tipologia di fornitura nel triennio 2021-2023."
+  },
+  {
+    "id": "Q09",
+    "question": "Perché nel 2023 il Gruppo ha cambiato lo strumento informatico con cui si possono segnalare comportamenti illeciti?",
+    "expected_type": "text",
+    "expected_pages": [39],
+    "expected_keywords": ["24", "whistleblowing"],
+    "expected_answer": "Per conformarsi al D.Lgs. 10 marzo 2023, n. 24 (che ha recepito la Direttiva UE 2019/1937 in materia di whistleblowing) e tutelare la riservatezza del segnalante, sostituendo l'applicativo in uso dal 2018 con una piattaforma multidisciplinare di altro fornitore."
+  }
+]
