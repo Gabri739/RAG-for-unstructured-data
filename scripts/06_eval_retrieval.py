@@ -90,8 +90,19 @@ def _extract_best_snippet(
         if ln.strip() and not ln.strip().startswith("#")
     ]
     body_text = " ".join(body_lines)
-    raw_sentences = re.split(r"(?<=[\.\?;])\s+|\s*●\s*", body_text)
-    sentences = [s.strip() for s in raw_sentences if len(s.strip()) >= 15]
+    # Evita di spezzare su abbreviazioni italiane comuni (D.Lgs., art., n., pag., es., ecc.)
+    protected = re.sub(
+        r"\b(d\.lgs|art|artt|n|nr|pag|pagg|es|ecc|c\.d|s\.p\.a)\.\s+",
+        lambda m: m.group(0).replace(". ", "§ "),
+        body_text,
+        flags=re.IGNORECASE,
+    )
+    raw_sentences = re.split(r"(?<=[\.\?;])\s+|\s*●\s*", protected)
+    sentences = [
+        s.replace("§ ", ". ").strip()
+        for s in raw_sentences
+        if len(s.strip()) >= 20
+    ]
     if not sentences:
         return body_text[:300]
 
@@ -236,9 +247,10 @@ def evaluate_questions(
             counts["missing"] += 1
             reciprocal_ranks.append(0.0)
 
+        best_overall = hits[0] if hits else (raw_hits[0] if raw_hits else None)
         top1_snippet = (
-            _extract_best_snippet(hits[0], question, embedder, query_vec=q_vec)
-            if hits
+            _extract_best_snippet(best_overall, question, embedder, query_vec=q_vec)
+            if best_overall is not None
             else None
         )
         matched_snippet = (
@@ -260,10 +272,10 @@ def evaluate_questions(
                 "matched_chunk_id": matched_hit.chunk_id if matched_hit else None,
                 "matched_score": matched_hit.score if matched_hit else None,
                 "matched_snippet": matched_snippet,
-                "top1_chunk_id": hits[0].chunk_id if hits else None,
-                "top1_type": hits[0].chunk_type if hits else None,
-                "top1_pages": hits[0].pages if hits else [],
-                "top1_score": hits[0].score if hits else None,
+                "top1_chunk_id": best_overall.chunk_id if best_overall else None,
+                "top1_type": best_overall.chunk_type if best_overall else None,
+                "top1_pages": best_overall.pages if best_overall else [],
+                "top1_score": best_overall.score if best_overall else None,
                 "top1_snippet": top1_snippet,
             }
         )
