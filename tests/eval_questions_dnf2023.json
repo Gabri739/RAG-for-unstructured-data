@@ -70,5 +70,13 @@
     "expected_pages": [39],
     "expected_keywords": ["24", "whistleblowing"],
     "expected_answer": "Per conformarsi al D.Lgs. 10 marzo 2023, n. 24 (che ha recepito la Direttiva UE 2019/1937 in materia di whistleblowing) e tutelare la riservatezza del segnalante, sostituendo l'applicativo in uso dal 2018 con una piattaforma multidisciplinare di altro fornitore."
+  },
+  {
+    "id": "Q10",
+    "question": "Quante polizze RiparaOK risultavano in essere a fine 2023?",
+    "expected_type": "table",
+    "expected_pages": [52],
+    "expected_keywords": ["218.484,218.484", "2023"],
+    "expected_answer": "218.484,218.484 polizze (esistenti al 31.12.2023; nel 2022 erano 85.259)."
   }
 ]
