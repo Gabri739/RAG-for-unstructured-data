@@ -76,7 +76,7 @@
     "question": "Quante polizze RiparaOK risultavano in essere a fine 2023?",
     "expected_type": "table",
     "expected_pages": [52],
-    "expected_keywords": ["218.484,218.484", "2023"],
-    "expected_answer": "218.484,218.484 polizze (esistenti al 31.12.2023; nel 2022 erano 85.259)."
+    "expected_keywords": ["218.484", "2023"],
+    "expected_answer": "218.484 polizze (esistenti al 31.12.2023; nel 2022 erano 85.259)."
   }
 ]
