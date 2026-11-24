@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from docling_core.transforms.serializer.markdown import MarkdownDocSerializer, MarkdownParams
 from docling_core.types.doc import DoclingDocument, ProvenanceItem, TableItem
 from docling_core.types.doc.common.meta import FloatingMeta
 from PIL import Image
@@ -35,12 +36,14 @@ from PIL import Image
 META_NAMESPACE: str = "rag"
 META_FIELD: str = "table_images"
 META_KEY: str = f"{META_NAMESPACE}__{META_FIELD}"  # -> "rag__table_images"
+ROW_PAGES_FIELD: str = "row_pages"
+ROW_PAGES_KEY: str = f"{META_NAMESPACE}__{ROW_PAGES_FIELD}"  # -> "rag__row_pages"
 
 DEFAULT_PADDING_PT: float = 4.0  # margine attorno al bbox (in punti PDF)
 
 # ATTENZIONE: il serializer Markdown di docling-core stampa anche i campi meta custom.
 # Per un Markdown pulito usare: doc.export_to_markdown(blocked_meta_names=MARKDOWN_BLOCKED_META)
-MARKDOWN_BLOCKED_META: set[str] = {META_KEY}
+MARKDOWN_BLOCKED_META: set[str] = {META_KEY, ROW_PAGES_KEY}
 
 
 @dataclass
@@ -113,6 +116,28 @@ def get_table_images(table: TableItem) -> list[dict]:
     if table.meta is None:
         return []
     return list(table.meta.get_custom_part().get(META_KEY, []))
+
+
+def set_table_row_pages(table: TableItem, row_pages: list[int]) -> None:
+    """Scrive nei metadati la pagina di ogni riga della griglia (tabelle fuse su più pagine)."""
+    if table.meta is None:
+        table.meta = FloatingMeta()
+    table.meta.set_custom_field(namespace=META_NAMESPACE, name=ROW_PAGES_FIELD, value=row_pages)
+
+
+def get_table_row_pages(table: TableItem) -> list[int]:
+    """Legge dai metadati la pagina di ogni riga della griglia (vuota se assente)."""
+    if table.meta is None:
+        return []
+    return [int(p) for p in table.meta.get_custom_part().get(ROW_PAGES_KEY, [])]
+
+
+def export_table_markdown(table: TableItem, doc: DoclingDocument) -> str:
+    """Markdown della singola tabella, senza i metadati custom (`MARKDOWN_BLOCKED_META`)."""
+    serializer = MarkdownDocSerializer(
+        doc=doc, params=MarkdownParams(blocked_meta_names=MARKDOWN_BLOCKED_META)
+    )
+    return serializer.serialize(item=table).text
 
 
 def save_table_images(

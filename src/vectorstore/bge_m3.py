@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 import torch
 
@@ -71,6 +71,14 @@ def _resolve_model_path(model_name: str) -> str:
             repo_id=model_name,
             ignore_patterns=["onnx/*", "*.onnx*", "imgs/*", "*.DS_Store"],
         )
+
+
+def get_token_counter(model_name: str = BGE_M3_MODEL_NAME) -> Callable[[str], int]:
+    """Contatore di token basato sul tokenizer di `BAAI/bge-m3` (senza caricare il modello)."""
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(_resolve_model_path(model_name))
+    return lambda text: len(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 
 class BGEM3Embedder:

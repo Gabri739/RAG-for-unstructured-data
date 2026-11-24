@@ -1,6 +1,6 @@
 """Step 6 - Valutazione quantitativa del Retrieval su Qdrant (con estrazione della frase/riga e domande negative).
 
-Legge il file delle domande di test (`tests/eval_questions_dnf2023.json`), interroga Qdrant
+Legge il file delle domande di test indicato, interroga Qdrant
 con i primi `top_k=20` risultati (e soglia di rilevanza `DEFAULT_SCORE_THRESHOLD = 0.55`) e:
   1. Per le domande con risposta nel documento, verifica in quale posizione cade il chunk corretto:
      `PRIMO (1°)`, `TRA I PRIMI 5`, `TRA I PRIMI 20`, `ASSENTE (>20)`.
@@ -11,11 +11,12 @@ con i primi `top_k=20` risultati (e soglia di rilevanza `DEFAULT_SCORE_THRESHOLD
      (se `table`, con l'header delle colonne) più pertinente alla domanda tramite BGE-M3.
 
 Uso:
-    uv run python scripts/06_eval_retrieval.py [file_domande.json] [doc_id_filtro] [score_threshold]
+    uv run python scripts/06_eval_retrieval.py domande.json [--doc-id ID] [--threshold 0.55]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -303,13 +304,12 @@ def evaluate_questions(
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    questions_path = (
-        Path(sys.argv[1])
-        if len(sys.argv) > 1
-        else ROOT / "tests/eval_questions_dnf2023.json"
-    )
-    doc_id_filter = sys.argv[2] if len(sys.argv) > 2 else None
-    threshold = float(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_SCORE_THRESHOLD
+    parser = argparse.ArgumentParser(description="Valutazione del retrieval")
+    parser.add_argument("questions", type=Path, help="file JSON delle domande di test")
+    parser.add_argument("--doc-id", default=None, help="limita la ricerca a un documento")
+    parser.add_argument("--threshold", type=float, default=DEFAULT_SCORE_THRESHOLD)
+    args = parser.parse_args()
+    questions_path, doc_id_filter, threshold = args.questions, args.doc_id, args.threshold
 
     if not questions_path.exists():
         raise FileNotFoundError(f"File domande non trovato: {questions_path}")

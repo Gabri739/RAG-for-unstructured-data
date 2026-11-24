@@ -1,16 +1,19 @@
 """Step 1 - Parsing di un PDF con Docling per ispezionare le tabelle.
 
-Esegue Docling (TableFormer ACCURATE, GPU) su un PDF nativo digitale e produce:
+Esegue Docling (TableFormer ACCURATE, GPU se disponibile) su un PDF e produce:
   - <out>/<stem>.md          Markdown completo del documento
   - <out>/tables/tN_pP.png   ritaglio di ogni tabella
   - <out>/tables.json        elenco tabelle (pagina, righe, colonne, bbox, header)
   - <out>/tables_md/tN_pP.md Markdown della singola tabella
   - <out>/timing.json        tempi di conversione
 
+L'OCR si attiva da solo se il PDF contiene pagine scansionate.
+
 Uso:
-    uv run python scripts/01_parse.py [percorso_pdf] [cartella_output]
+    uv run python scripts/01_parse.py percorso.pdf cartella_output
 """
 
+import argparse
 import json
 import sys
 import time
@@ -21,10 +24,13 @@ import torch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.extractors.docling_parser import get_converter  # noqa: E402
+from src.extractors.docling_parser import convert_pdf  # noqa: E402
 
-PDF = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data/raw/20260511_131038/source.pdf"
-OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "data/processed/docling/dnf2023"
+parser = argparse.ArgumentParser(description="Parsing di un PDF con Docling")
+parser.add_argument("pdf", type=Path, help="PDF da convertire")
+parser.add_argument("out", type=Path, help="cartella di output")
+args = parser.parse_args()
+PDF, OUT = args.pdf, args.out
 
 (OUT / "tables").mkdir(parents=True, exist_ok=True)
 (OUT / "tables_md").mkdir(parents=True, exist_ok=True)
@@ -33,13 +39,12 @@ cuda = torch.cuda.is_available()
 print(f"torch {torch.__version__} | CUDA disponibile: {cuda}"
       + (f" ({torch.cuda.get_device_name(0)})" if cuda else ""))
 
-converter = get_converter()
-
 t0 = time.perf_counter()
-doc = converter.convert(PDF).document
+doc, ocr_pages = convert_pdf(PDF)
 elapsed = time.perf_counter() - t0
 n_pages = len(doc.pages)
-print(f"Conversione: {elapsed:.1f}s per {n_pages} pagine ({elapsed / max(n_pages, 1):.2f} s/pag)")
+print(f"Conversione: {elapsed:.1f}s per {n_pages} pagine ({elapsed / max(n_pages, 1):.2f} s/pag)"
+      + (f" | pagine con OCR: {ocr_pages}" if ocr_pages else ""))
 
 (OUT / f"{PDF.stem}.md").write_text(doc.export_to_markdown(), encoding="utf-8")
 doc.save_as_json(OUT / "document.json")
@@ -84,6 +89,7 @@ for i, t in enumerate(doc.tables):
     "pdf": str(PDF), "pages": n_pages, "seconds": round(elapsed, 2),
     "seconds_per_page": round(elapsed / max(n_pages, 1), 3),
     "device": "cuda" if cuda else "cpu", "n_tables": len(doc.tables),
+    "ocr_pages": ocr_pages,
 }, indent=2), encoding="utf-8")
 
 print(f"\n{len(doc.tables)} tabelle trovate. Output in: {OUT}")

@@ -1,28 +1,24 @@
 """Modulo di fusione delle tabelle multi-pagina su DoclingDocument.
 
 Secondo blocco della pipeline di ingestione:
-  PDF nativi -> Docling -> Fusione (tabelle e righe) -> Immagini -> Chunking -> ...
+  PDF -> Docling -> Fusione (tabelle e righe) -> Immagini -> Chunking -> ...
 
-Calibrato sui dati reali DNF 2023 (85 tabelle estratte da TableFormer ACCURATE):
-  1. Rimozione tabelle vuote/fittizie (0 righe o 0 colonne, es. T5 e T6).
-  2. Rilevamento catene di tabelle spezzate su pagine consecutive (p -> p+1):
-     - Coordinate verticali sul taglio pagina (BOTTOMLEFT: b1.b <= 145 pt, b2.t >= 740 pt).
-     - Allineamento orizzontale (|l1 - l2| <= 15 pt e |r1 - r2| <= 15 pt, o stub a 1 colonna).
-     - Assenza di testo discorsivo intermedio nel body (ignorando header/footer di pagina
-       come "Sara Assicurazioni SpA DNF 2023", numeri di pagina e note a piè di pagina).
-     - Compatibilità del numero di colonne (c1 == c2, oppure |c1 - c2| == 1 per colonne
-       icone/vuote come T2->T3->T4 e T50->T51, oppure continuazione stub c2 == 1 come T57->T58).
-  3. Unificazione della griglia (TableData):
-     - Allineamento automatico delle colonne mancanti (interna vuota vs finale vuota).
-     - Normalizzazione degli header multi-livello (es. Modelli Tassonomia UE a 3 righe di header)
-       e dei banner di titolo a tutta larghezza (es. T29, T46).
-     - Rimozione di eventuali header ripetuti nelle pagine successive.
-     - Ricucitura delle righe spezzate a cavallo di pagina (split-row stitching: es. T3->T4,
-       T9->T10, T62->T63, T66->T67, T72->T73, T74->T75).
+Nessuna regola dipende dal contenuto o dalla lingua del documento, né dal formato di pagina:
+  1. Rimozione tabelle vuote/fittizie (0 righe o 0 colonne).
+  2. Rilevamento catene di tabelle spezzate su pagine consecutive (p -> p+1). Due tabelle si
+     fondono solo se:
+     - la prima arriva in fondo alla pagina e la seconda inizia in cima (frazioni di pagina);
+     - sono allineate orizzontalmente e hanno un numero di colonne compatibile;
+     - tra loro non c'è testo reale né una figura (testate e piè di pagina sono riconosciuti
+       per ripetizione, vedi `running_text.py`);
+     - la seconda non è una tabella nuova (didascalia, titolo o intestazione propri).
+  3. Unificazione della griglia (TableData): allineamento delle colonne mancanti, rimozione degli
+     header ripetuti, ricucitura delle righe spezzate a cavallo di pagina, header normalizzati
+     con le regole strutturali di `table_structure.py`.
   4. Aggiornamento diretto di DoclingDocument:
-     - Conserva nella tabella capofila la lista completa di ProvenanceItem (pagine e bbox)
-       così da permettere il ritaglio immagine per ciascuna pagina (t.get_image(doc, prov_index=k)).
-     - Elimina dal documento le tabelle di continuazione e gli header di pagina intrusi.
+     - la tabella capofila conserva la lista completa di ProvenanceItem (pagine e bbox), così da
+       permettere il ritaglio immagine per ciascuna pagina, e la pagina di ogni riga;
+     - le tabelle di continuazione e le testate di pagina intruse vengono eliminate.
 """
 
 from __future__ import annotations
@@ -32,32 +28,34 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from docling_core.types.doc import (
-    CoordOrigin,
     DocItemLabel,
     DoclingDocument,
     NodeItem,
+    PictureItem,
     TableCell,
     TableData,
     TableItem,
 )
 
+from .running_text import find_running_text_refs, page_box
+from .table_images import set_table_row_pages
+from .table_structure import (
+    count_header_rows,
+    has_header_contrast,
+    is_banner_row,
+    is_section_row,
+    section_style,
+    split_merged_header,
+)
+
 if TYPE_CHECKING:
     pass
 
-# Soglie spaziali calibrate su A4 (595 x 842 pt) in coordinate BOTTOMLEFT
-BOTTOM_MARGIN_MAX_PT: float = 145.0  # t1 finisce vicino al fondo pagina (osservato: 52.8 - 140.3; falso positivo T35 = 172.5)
-TOP_MARGIN_MIN_PT: float = 740.0     # t2 inizia in cima alla pagina successiva (osservato: 753.8 - 768.4)
-HORIZ_TOLERANCE_PT: float = 15.0     # tolleranza allineamento margini sinistro/destro
-
-# Pattern di rumore tipografico (running headers/footers classificati come testo o section_header)
-_PAGE_NOISE_RE = re.compile(
-    r"^(?:"
-    r"sara\s+assicurazioni.*dnf.*|"
-    r"dnf\s*\d{4}|"
-    r"\d{1,3}"
-    r")$",
-    re.IGNORECASE,
-)
+# Soglie in frazioni di pagina, indipendenti dal formato (A4, Letter, orizzontale, ...)
+BOTTOM_ZONE: float = 0.20      # t1 deve finire nell'ultimo 20% della pagina
+TOP_ZONE: float = 0.18         # t2 deve iniziare nel primo 18% della pagina successiva
+HORIZ_TOLERANCE: float = 0.025 # tolleranza allineamento margini sinistro/destro
+MIN_PICTURE_AREA: float = 0.03 # figure più piccole (loghi, icone) non separano due tabelle
 
 
 @dataclass
@@ -107,27 +105,53 @@ def _collect_intervening_items(
     return between_map
 
 
+def _is_separating_picture(
+    item: PictureItem,
+    doc: DoclingDocument,
+    tables: tuple[TableItem, TableItem],
+) -> bool:
+    """True per una figura di dimensioni significative fuori dalle due tabelle."""
+    if not item.prov:
+        return False
+    box = page_box(doc, item.prov[0])
+    if box is None or (box[2] - box[0]) * (box[3] - box[1]) < MIN_PICTURE_AREA:
+        return False
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    for table in tables:
+        for prov in table.prov:
+            tb = page_box(doc, prov)
+            if prov.page_no == item.prov[0].page_no and tb is not None:
+                if tb[0] <= cx <= tb[2] and tb[1] <= cy <= tb[3]:
+                    return False
+    return True
+
+
 def _classify_intervening_items(
     t1: TableItem,
     t2: TableItem,
     between_items: list[NodeItem],
+    doc: DoclingDocument,
+    running_refs: set[str],
 ) -> tuple[bool, list[NodeItem]]:
-    """Controlla se tra t1 e t2 c'è testo reale del documento oppure solo rumore/didascalie.
+    """Controlla se tra t1 e t2 c'è contenuto reale del documento oppure solo rumore/didascalie.
 
     Restituisce:
-      (has_real_text, noise_items_to_delete)
+      (has_real_content, noise_items_to_delete)
     """
-    t1_owned_refs = {r.cref for r in (t1.captions + t1.footnotes)}
-    t2_owned_refs = {r.cref for r in (t2.captions + t2.footnotes)}
+    owned_refs = {r.cref for t in (t1, t2) for r in (t.captions + t.footnotes)}
     p1 = t1.prov[-1].page_no
-    b1 = t1.prov[-1].bbox
-    p2 = t2.prov[0].page_no
+    box1 = page_box(doc, t1.prov[-1])
 
     noise_to_delete: list[NodeItem] = []
 
     for item in between_items:
         ref = getattr(item, "self_ref", None)
-        if ref in t1_owned_refs or ref in t2_owned_refs:
+        if ref in owned_refs:
+            continue
+
+        if isinstance(item, PictureItem):
+            if _is_separating_picture(item, doc, (t1, t2)):
+                return True, []
             continue
 
         label = getattr(item, "label", None)
@@ -139,32 +163,52 @@ def _classify_intervening_items(
         }:
             continue
 
-        text = getattr(item, "text", "").strip()
-        if not text:
+        if not getattr(item, "text", "").strip():
             continue
 
-        # Header di pagina intruso (es. "## Sara Assicurazioni SpA DNF 2023" a pag. 44, 56, 65)
-        if _PAGE_NOISE_RE.match(text):
+        # Testata, piè di pagina o numero di pagina classificati come testo o titolo
+        if ref in running_refs:
             noise_to_delete.append(item)
             continue
 
+        # Nota a piè di pagina posizionata fisicamente sotto la tabella t1
         prov = getattr(item, "prov", None)
-        if prov:
-            ip = prov[0].page_no
-            ib = prov[0].bbox
-            if ib.coord_origin == CoordOrigin.BOTTOMLEFT:
-                # Nota a piè di pagina sulla pagina p1 posizionata fisicamente sotto la tabella t1
-                if ip == p1 and ib.t <= b1.b + 4.0:
-                    continue
-                # Running header nel margine superiore della pagina p2 (sopra y = 780 pt)
-                if ip == p2 and ib.b >= 780.0 and len(text) <= 80:
-                    noise_to_delete.append(item)
-                    continue
+        if prov and prov[0].page_no == p1 and box1 is not None:
+            box = page_box(doc, prov[0])
+            if box is not None and box[1] >= box1[3] - 0.005:
+                continue
 
-        # Se arriviamo qui, c'è un vero paragrafo o titolo di sezione tra le due tabelle
         return True, []
 
     return False, noise_to_delete
+
+
+def _starts_new_table(t1: TableItem, t2: TableItem, doc: DoclingDocument) -> bool:
+    """True se t2 ha titolo o intestazione propri, quindi non è la continuazione di t1."""
+    caption1 = t1.caption_text(doc).strip().lower()
+    caption2 = t2.caption_text(doc).strip().lower()
+    if caption2 and caption2 != caption1 and not (caption1 and caption2.startswith(caption1)):
+        return True
+
+    rows1, flags1 = _extract_grid_and_headers(t1)
+    rows2, flags2 = _extract_grid_and_headers(t2)
+    header1 = rows1[: max(count_header_rows(rows1, flags1), 1)]
+
+    if not rows2 or _is_repeated_header(rows2[0], header1):
+        return False
+
+    first = rows2[0]
+    if is_section_row(first) or is_banner_row(first):
+        # Se t1 contiene già righe-sezione dello stesso tipo, t2 ne prosegue semplicemente l'elenco
+        style = section_style(first[0])
+        if any(is_section_row(r) and section_style(r[0]) == style for r in rows1):
+            return False
+    if is_banner_row(first):
+        # Un titolo a tutta larghezza seguito da un'intestazione apre una tabella nuova
+        has_header = len(rows2) >= 3 and has_header_contrast(rows2[1], rows2[2:])
+        return has_header and not _is_repeated_header(rows2[1], header1)
+
+    return has_header_contrast(first, rows2[1:]) and bool(first[0].strip())
 
 
 def should_merge_tables(
@@ -172,6 +216,7 @@ def should_merge_tables(
     t2: TableItem,
     doc: DoclingDocument,
     between_items: list[NodeItem],
+    running_refs: set[str] | None = None,
 ) -> tuple[bool, list[NodeItem]]:
     """Determina se t2 è la continuazione diretta di t1 sulla pagina successiva."""
     if _is_empty_table(t1) or _is_empty_table(t2):
@@ -180,32 +225,23 @@ def should_merge_tables(
     if not t1.prov or not t2.prov:
         return False, []
 
-    p1 = t1.prov[-1].page_no
-    p2 = t2.prov[0].page_no
-    if p2 != p1 + 1:
+    if t2.prov[0].page_no != t1.prov[-1].page_no + 1:
         return False, []
 
-    b1 = t1.prov[-1].bbox
-    b2 = t2.prov[0].bbox
+    box1 = page_box(doc, t1.prov[-1])
+    box2 = page_box(doc, t2.prov[0])
+    if box1 is None or box2 is None:
+        return False, []
 
     # 1. Verifica vicinanza ai margini inferiore (p1) e superiore (p2)
-    if b1.coord_origin == CoordOrigin.BOTTOMLEFT:
-        if b1.b > BOTTOM_MARGIN_MAX_PT:
-            return False, []
-        if b2.t < TOP_MARGIN_MIN_PT:
-            return False, []
-    else:
-        page_h = doc.pages[p1].size.height if p1 in doc.pages and doc.pages[p1].size else 842.0
-        if (page_h - b1.b) > BOTTOM_MARGIN_MAX_PT:
-            return False, []
-        if (page_h - b2.t) < TOP_MARGIN_MIN_PT and b2.t > (page_h - TOP_MARGIN_MIN_PT):
-            return False, []
+    if box1[3] < 1 - BOTTOM_ZONE or box2[1] > TOP_ZONE:
+        return False, []
 
     # 2. Verifica allineamento orizzontale
     c1 = t1.data.num_cols
     c2 = t2.data.num_cols
-    left_aligned = abs(b1.l - b2.l) <= HORIZ_TOLERANCE_PT
-    right_aligned = abs(b1.r - b2.r) <= HORIZ_TOLERANCE_PT
+    left_aligned = abs(box1[0] - box2[0]) <= HORIZ_TOLERANCE
+    right_aligned = abs(box1[2] - box2[2]) <= HORIZ_TOLERANCE
     if not left_aligned:
         return False, []
     if not right_aligned and c2 != 1:
@@ -213,8 +249,8 @@ def should_merge_tables(
 
     # 3. Verifica compatibilità colonne:
     #    - Stesso numero di colonne (c1 == c2)
-    #    - Differenza di 1 colonna per colonna icone/vuota (es. T2 3col -> T3 2col, T50 5col -> T51 4col)
-    #    - Continuazione stub a 1 colonna (es. T57 4col -> T58 1col)
+    #    - Una colonna in meno (colonna di icone o vuota persa nella continuazione)
+    #    - Continuazione di una sola colonna
     cols_compatible = (
         c1 == c2
         or (c1 > c2 and c1 - c2 == 1)
@@ -223,9 +259,16 @@ def should_merge_tables(
     if not cols_compatible:
         return False, []
 
-    # 4. Verifica assenza di testo intermedio nel flusso del documento
-    has_real_text, noise_to_delete = _classify_intervening_items(t1, t2, between_items)
-    if has_real_text:
+    # 4. Verifica assenza di contenuto intermedio nel flusso del documento
+    refs = find_running_text_refs(doc) if running_refs is None else running_refs
+    has_real_content, noise_to_delete = _classify_intervening_items(
+        t1, t2, between_items, doc, refs
+    )
+    if has_real_content:
+        return False, []
+
+    # 5. Verifica che t2 non sia una tabella nuova
+    if _starts_new_table(t1, t2, doc):
         return False, []
 
     return True, noise_to_delete
@@ -243,7 +286,7 @@ def _extract_grid_and_headers(table: TableItem) -> tuple[list[list[str]], list[b
 
 
 def _find_empty_interior_col(rows: list[list[str]], header_count: int, num_cols: int) -> int | None:
-    """Cerca se esiste una colonna interna (0 < col < num_cols-1) sempre vuota nelle righe dati (es. T2 col 1)."""
+    """Cerca se esiste una colonna interna (0 < col < num_cols-1) sempre vuota nelle righe dati."""
     data_rows = rows[header_count:] if len(rows) > header_count else rows
     if not data_rows:
         return None
@@ -285,13 +328,7 @@ def _is_repeated_header(row: list[str], header_rows: list[list[str]]) -> bool:
 def _is_split_row_continuation(prev_row: list[str], next_row: list[str]) -> bool:
     """Rileva se la prima riga della tabella successiva è il frammento spezzato dell'ultima riga precedente.
 
-    Casi reali calibrati su DNF 2023:
-      - T3 -> T4:   ['', '', 'di sicurezza ovvero trattamento dei dati...']
-      - T9 -> T10:  ['', '', '', '', '', 'prodotti/tariffe Sara Assicurazioni...']
-      - T62 -> T63: ['', '(UE) 2021/2139 al denominatore del KPI applicabile', '', ...]
-      - T66 -> T67: ['', 'non allineata alla tassonomia...', '', ...]
-      - T72 -> T73: ['', '(UE) 2021/2139 al numeratore del KPI applicabile', '', ...]
-      - T74 -> T75: ['', 'denominatore del KPI applicabile', '', ...]
+    Esempi: ['', '', 'resto della descrizione...'], ['', 'fine della voce precedente', '', '']
     """
     num_cols = len(next_row)
     if num_cols < 2:
@@ -317,8 +354,8 @@ def _is_split_row_continuation(prev_row: list[str], next_row: list[str]) -> bool
             return False
         nxt = next_row[j]
         prv = prev_row[j]
-        # Se entrambe iniziano con un codice numerico distinto (es. "405-1" vs "405-2"), sono righe diverse
-        if re.match(r"^\d{1,3}-\d{1,2}\b", prv) and re.match(r"^\d{1,3}-\d{1,2}\b", nxt):
+        # Se entrambe iniziano con un codice distinto (es. "405-1" e "405-2"), sono righe diverse
+        if re.match(r"^\d+[-.]\d+", prv) and re.match(r"^\d+[-.]\d+", nxt):
             return False
         # Verifica segnale linguistico di continuazione: inizia con minuscola / parentesi,
         # oppure la riga precedente ha la colonna chiave (col 0) valorizzata e le altre colonne piene.
@@ -333,66 +370,17 @@ def _is_split_row_continuation(prev_row: list[str], next_row: list[str]) -> bool
 
 
 def _normalize_header_flags(rows: list[list[str]], is_header: list[bool]) -> list[bool]:
-    """Normalizza i flag column_header sulle prime righe della tabella.
+    """Normalizza i flag column_header con le regole strutturali di `count_header_rows`.
 
-    Gestisce tre casi frequenti nei report DNF/bilanci:
-      1. Banner di titolo in riga 0 (tutte le celle uguali o solo col 0 piena) seguito
-         dalla vera intestazione colonne in riga 1 (es. T29 'SUBAGENTI...', T46 'EMISSIONI...').
-      2. Intestazioni multi-livello a 2 o 3 righe (es. T70, T72 Modelli Tassonomia UE dove
-         le righe 0..2 compongono l'header con 'Importo' e '%').
-      3. Tabelle di dati che hanno la riga 0 con intestazioni esplicite ma column_header=False
-         (es. T76 'Riga | Attività economiche | Importo | Percentuale').
+    Un titolo a tutta larghezza seguito dall'intestazione viene ridotto alla prima cella, così da
+    non essere ripetuto su tutte le colonne nell'header combinato.
     """
-    n_rows = len(rows)
-    if n_rows == 0:
+    if not rows:
         return is_header
-
-    flags = list(is_header)
-
-    # Caso 3: Riga 0 è chiaramente un header ("Riga | Attività economiche..." o "Tema | ...")
-    r0_lower = [c.lower() for c in rows[0]]
-    if not flags[0] and n_rows >= 2:
-        if r0_lower[0] in {"riga", "rig a", "tema", "tipologia", "categoria", "città", "gri standard"}:
-            flags[0] = True
-
-    # Caso 1: Riga 0 è un banner di titolo a tutta larghezza e Riga 1 è l'intestazione colonne
-    if n_rows >= 2:
-        r0_non_empty = [c for c in rows[0] if c]
-        r1_non_empty = [c for c in rows[1] if c]
-        is_r0_banner = (
-            len(r0_non_empty) == 1 and rows[0][0] != "" and len(rows[0]) > 1
-        ) or (
-            len(r0_non_empty) > 1 and len(set(r0_non_empty)) == 1
-        )
-        if is_r0_banner and len(r1_non_empty) >= 2:
-            # Controlliamo se riga 1 contiene anni (2021, 2022, 2023) o parole chiave di header
-            r1_joined = " ".join(r1_non_empty).lower()
-            if any(k in r1_joined for k in ("2021", "2022", "2023", "tipologia", "categoria", "uomini", "donne", "totale", "importo")):
-                # Evitiamo che il banner venga ripetuto su tutte le colonne nell'header combinato
-                banner_text = r0_non_empty[0]
-                rows[0] = [banner_text] + [""] * (len(rows[0]) - 1)
-                flags[0] = True
-                flags[1] = True
-
-    # Caso 2: Intestazioni multi-livello Tassonomia UE (3 righe di header: Riga/Attività + CCM/CCA + Importo/%)
-    if n_rows >= 3 and flags[0]:
-        for r_idx in (1, 2):
-            r_cells = [c.lower() for c in rows[r_idx] if c]
-            if r_cells and all(
-                any(tok in c for tok in ("importo", "%", "ccm", "cca", "mitigazione", "adattamento", "quota", "riga", "attività"))
-                for c in r_cells
-            ):
-                flags[r_idx] = True
-
-    # Garantisce che i flag column_header=True siano solo un prefisso contiguo all'inizio della tabella
-    seen_data = False
-    for i in range(n_rows):
-        if flags[i] and not seen_data:
-            continue
-        seen_data = True
-        flags[i] = False
-
-    return flags
+    n_header = count_header_rows(rows, is_header)
+    if n_header >= 2 and is_banner_row(rows[0]):
+        rows[0] = [next(c for c in rows[0] if c)] + [""] * (len(rows[0]) - 1)
+    return [i < n_header for i in range(len(rows))]
 
 
 def _build_table_data(rows: list[list[str]], is_header: list[bool], num_cols: int) -> TableData:
@@ -421,11 +409,12 @@ def _build_table_data(rows: list[list[str]], is_header: list[bool], num_cols: in
     )
 
 
-def _merge_table_chain(chain: list[TableItem]) -> tuple[TableData, int]:
+def _merge_table_chain(chain: list[TableItem]) -> tuple[TableData, int, list[int]]:
     """Unisce una catena di TableItem [T_0, T_1, ..., T_k] in un unico TableData.
 
     Restituisce:
-      (merged_table_data, num_stitched_rows)
+      (merged_table_data, num_stitched_rows, pagina_di_ogni_riga)
+    Una riga ricucita a cavallo di due pagine mantiene la pagina in cui inizia.
     """
     target_cols = max(t.data.num_cols for t in chain)
 
@@ -434,13 +423,14 @@ def _merge_table_chain(chain: list[TableItem]) -> tuple[TableData, int]:
     head_hdr_flags = _normalize_header_flags(head_rows, head_hdr_flags)
     header_count = sum(1 for f in head_hdr_flags if f)
 
-    # Verifica se la prima tabella ha una colonna interna sempre vuota nei dati (es. T2 col 1)
+    # Verifica se la prima tabella ha una colonna interna sempre vuota nei dati (es. icone)
     empty_interior_col = _find_empty_interior_col(head_rows, header_count, chain[0].data.num_cols)
 
     merged_rows: list[list[str]] = [
         _pad_row_to_cols(r, target_cols, empty_interior_col) for r in head_rows
     ]
     merged_hdr_flags: list[bool] = list(head_hdr_flags)
+    row_pages: list[int] = [chain[0].prov[0].page_no] * len(merged_rows)
     header_rows_ref = merged_rows[: max(header_count, 1)]
 
     stitched_count = 0
@@ -491,11 +481,15 @@ def _merge_table_chain(chain: list[TableItem]) -> tuple[TableData, int]:
         for r in remaining_rows:
             merged_rows.append(r)
             merged_hdr_flags.append(False)
+            row_pages.append(cont_table.prov[0].page_no)
 
-    # Riapplica la normalizzazione degli header (utile quando T_0 aveva solo l'header, es. T29 o T76)
+    # Riapplica la normalizzazione degli header (utile quando la prima tabella aveva solo l'header)
     merged_hdr_flags = _normalize_header_flags(merged_rows, merged_hdr_flags)
+    merged_rows, merged_hdr_flags, origin = split_merged_header(merged_rows, merged_hdr_flags)
+    row_pages = [row_pages[i] for i in origin]
 
-    return _build_table_data(merged_rows, merged_hdr_flags, target_cols), stitched_count
+    merged = _build_table_data(merged_rows, merged_hdr_flags, target_cols)
+    return merged, stitched_count, row_pages
 
 
 def fuse_document_tables(doc: DoclingDocument) -> FusionReport:
@@ -506,8 +500,9 @@ def fuse_document_tables(doc: DoclingDocument) -> FusionReport:
       2. Individua le catene di tabelle spezzate su pagine consecutive.
       3. Per ciascuna catena, aggiorna `head_table.data` con la griglia unificata e
          concatena `prov`, `captions` e `footnotes` delle tabelle successive.
-      4. Normalizza anche le tabelle singole con banner di titolo in riga 0 (es. T41).
-      5. Elimina dal documento le tabelle di continuazione e gli header di pagina intrusi.
+      4. Normalizza anche le tabelle singole con titolo a tutta larghezza in riga 0.
+      5. Elimina dal documento le tabelle di continuazione e le testate di pagina classificate
+         per errore come testo o titolo.
     """
     original_count = len(doc.tables)
     empty_indices: list[int] = []
@@ -522,8 +517,9 @@ def fuse_document_tables(doc: DoclingDocument) -> FusionReport:
         else:
             non_empty_tables.append((idx, table))
 
-    # 2. Costruisci mappa degli elementi intermedi nel documento
+    # 2. Costruisci mappa degli elementi intermedi nel documento e trova le testate di pagina
     between_map = _collect_intervening_items(doc)
+    running_refs = find_running_text_refs(doc)
 
     # 3. Raggruppa le tabelle non vuote in catene di continuazione
     chains: list[list[tuple[int, TableItem]]] = []
@@ -536,7 +532,9 @@ def fuse_document_tables(doc: DoclingDocument) -> FusionReport:
 
         prev_idx, prev_table = chains[-1][-1]
         between_items = between_map.get((prev_table.self_ref, table.self_ref), [])
-        can_merge, noise_items = should_merge_tables(prev_table, table, doc, between_items)
+        can_merge, noise_items = should_merge_tables(
+            prev_table, table, doc, between_items, running_refs
+        )
         if can_merge:
             chains[-1].append((idx, table))
             noise_to_delete.extend(noise_items)
@@ -548,7 +546,7 @@ def fuse_document_tables(doc: DoclingDocument) -> FusionReport:
 
     for chain in chains:
         if len(chain) == 1:
-            # Tabella singola: normalizza comunque eventuali banner + header (es. T33, T41)
+            # Tabella singola: normalizza comunque eventuali titolo interno + header
             _, single_table = chain[0]
             rows, hdr_flags = _extract_grid_and_headers(single_table)
             new_flags = _normalize_header_flags(rows, hdr_flags)
@@ -560,8 +558,9 @@ def fuse_document_tables(doc: DoclingDocument) -> FusionReport:
         table_objs = [t for _, t in chain]
         orig_indices = [i for i, _ in chain]
 
-        merged_data, stitched_count = _merge_table_chain(table_objs)
+        merged_data, stitched_count, row_pages = _merge_table_chain(table_objs)
         head_table.data = merged_data
+        set_table_row_pages(head_table, row_pages)
 
         # Unisci provenance, captions e footnotes delle tabelle di continuazione nella capofila
         existing_caps = {r.cref for r in head_table.captions}
@@ -605,8 +604,9 @@ def fuse_document_tables(doc: DoclingDocument) -> FusionReport:
             )
         )
 
-    # 5. Rimuovi dal documento le tabelle vuote, le tabelle di continuazione e il rumore intermedio
-    all_deletions = items_to_delete + noise_to_delete
+    # 5. Rimuovi dal documento le tabelle vuote, le tabelle di continuazione e le testate di pagina
+    noise_refs = {item.self_ref for item in noise_to_delete} | running_refs
+    all_deletions = items_to_delete + [t for t in doc.texts if t.self_ref in noise_refs]
     if all_deletions:
         doc.delete_items(node_items=all_deletions)
 

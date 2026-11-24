@@ -8,9 +8,10 @@ Prima dell'inserimento elimina automaticamente eventuali chunk preesistenti con 
 stesso `doc_id`, evitando duplicati o chunk orfani dopo modifiche al chunking.
 
 Uso:
-    uv run python scripts/05_index_qdrant.py [cartella_chunk] [query_di_prova]
+    uv run python scripts/05_index_qdrant.py cartella_chunk [--query "domanda di prova"]
 """
 
+import argparse
 import json
 import sys
 import time
@@ -26,12 +27,11 @@ from src.vectorstore import (  # noqa: E402
     get_embedder,
 )
 
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data/processed/docling/dnf2023"
-TEST_QUERY = (
-    sys.argv[2]
-    if len(sys.argv) > 2
-    else "Qual è la ripartizione geografica della spesa per i fornitori nel 2023?"
-)
+parser = argparse.ArgumentParser(description="Embedding e indicizzazione su Qdrant")
+parser.add_argument("out", type=Path, help="cartella che contiene chunks.json")
+parser.add_argument("--query", default=None, help="domanda di prova da eseguire dopo l'indicizzazione")
+args = parser.parse_args()
+OUT, TEST_QUERY = args.out, args.query
 
 CHUNKS_JSON = OUT / "chunks.json"
 if not CHUNKS_JSON.exists():
@@ -65,16 +65,16 @@ print(
 )
 print("-" * 95)
 
-# Esegui una query di verifica
-print(f"Query di prova: {TEST_QUERY!r}\n")
-results = store.search(TEST_QUERY, embedder=embedder, top_k=3)
-for rank, r in enumerate(results, start=1):
-    preview = r.content.replace("\n", " ")[:140]
-    print(
-        f"  #{rank} score={r.score:.4f} | [{r.chunk_type.upper()}] {r.chunk_id} | "
-        f"pag={r.page_range} | sez={r.section or '-'} | img={r.image_paths}"
-    )
-    print(f"     {preview}...\n")
+# Esegui una query di verifica, se richiesta
+if TEST_QUERY:
+    print(f"Query di prova: {TEST_QUERY!r}\n")
+    for rank, r in enumerate(store.search(TEST_QUERY, embedder=embedder, top_k=3), start=1):
+        preview = r.content.replace("\n", " ")[:140]
+        print(
+            f"  #{rank} score={r.score:.4f} | [{r.chunk_type.upper()}] {r.chunk_id} | "
+            f"pag={r.page_range} | sez={r.section or '-'} | img={r.image_paths}"
+        )
+        print(f"     {preview}...\n")
 
 store.close()
 

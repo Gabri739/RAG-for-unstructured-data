@@ -6,9 +6,11 @@ prodotti dallo Step 3/2, esegue `MarkdownChunker.chunk_document(doc)` e salva:
   - <out>/chunks_preview.md   anteprima leggibile di tutti i chunk generati
 
 Uso:
-    uv run python scripts/04_chunk_document.py [cartella_output] [max_table_rows]
+    uv run python scripts/04_chunk_document.py cartella_output [--max-table-rows 25]
+        [--reference-codes gri]
 """
 
+import argparse
 import json
 import sys
 import time
@@ -19,10 +21,21 @@ from docling_core.types.doc import DoclingDocument
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.chunkers import MarkdownChunker  # noqa: E402
+from src.chunkers import REFERENCE_PATTERNS, MarkdownChunker  # noqa: E402
+from src.vectorstore import get_token_counter  # noqa: E402
 
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data/processed/docling/dnf2023"
-MAX_TABLE_ROWS = int(sys.argv[2]) if len(sys.argv) > 2 else 25
+parser = argparse.ArgumentParser(description="Chunking di un DoclingDocument")
+parser.add_argument("out", type=Path, help="cartella prodotta dagli step precedenti")
+parser.add_argument("--max-table-rows", type=int, default=25)
+parser.add_argument(
+    "--reference-codes",
+    nargs="*",
+    default=[],
+    choices=sorted(REFERENCE_PATTERNS),
+    help="codici di riferimento da riconoscere (default: nessuno)",
+)
+args = parser.parse_args()
+OUT, MAX_TABLE_ROWS = args.out, args.max_table_rows
 
 DOC_JSON = OUT / "document_images.json"
 if not DOC_JSON.exists():
@@ -46,6 +59,8 @@ chunker = MarkdownChunker(
     chunk_size=1500,
     chunk_overlap=200,
     max_table_rows=MAX_TABLE_ROWS,
+    count_tokens=get_token_counter(),
+    reference_patterns=[REFERENCE_PATTERNS[name] for name in args.reference_codes],
 )
 chunks = chunker.chunk_document(
     doc,

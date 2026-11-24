@@ -7,9 +7,10 @@ Carica `document.json` prodotto dallo Step 1, applica `fuse_document_tables(doc)
   - <out>/tables_fused_md/tN_pP.md  Markdown di ogni tabella dopo la fusione
 
 Uso:
-    uv run python scripts/02_fuse_tables.py [cartella_output]
+    uv run python scripts/02_fuse_tables.py cartella_output
 """
 
+import argparse
 import dataclasses
 import json
 import sys
@@ -22,8 +23,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.extractors.table_fusion import fuse_document_tables  # noqa: E402
+from src.extractors.table_images import MARKDOWN_BLOCKED_META, export_table_markdown  # noqa: E402
 
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data/processed/docling/dnf2023"
+parser = argparse.ArgumentParser(description="Fusione delle tabelle multi-pagina")
+parser.add_argument("out", type=Path, help="cartella prodotta dallo Step 1")
+OUT = parser.parse_args().out
 DOC_JSON = OUT / "document.json"
 
 if not DOC_JSON.exists():
@@ -58,7 +62,9 @@ for m in report.merged_chains:
     )
 
 # Salva artefatti aggiornati
-(OUT / "source_fused.md").write_text(doc.export_to_markdown(), encoding="utf-8")
+(OUT / "source_fused.md").write_text(
+    doc.export_to_markdown(blocked_meta_names=MARKDOWN_BLOCKED_META), encoding="utf-8"
+)
 doc.save_as_json(OUT / "document_fused.json")
 (OUT / "fusion_report.json").write_text(
     json.dumps(dataclasses.asdict(report), ensure_ascii=False, indent=2),
@@ -74,7 +80,7 @@ for i, t in enumerate(doc.tables):
     pages = sorted({p.page_no for p in t.prov})
     p_tag = f"p{pages[0]}" if len(pages) == 1 else f"p{pages[0]}-{pages[-1]}"
     (fused_md_dir / f"t{i}_{p_tag}.md").write_text(
-        t.export_to_markdown(doc=doc), encoding="utf-8"
+        export_table_markdown(t, doc), encoding="utf-8"
     )
 
 print("-" * 95)

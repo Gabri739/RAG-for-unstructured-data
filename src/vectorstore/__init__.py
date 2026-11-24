@@ -5,6 +5,7 @@ from .bge_m3 import (
     BGEM3Output,
     SparseEmbedding,
     get_embedder,
+    get_token_counter,
 )
 from .qdrant_store import (
     DEFAULT_COLLECTION_NAME,
@@ -30,4 +31,5 @@ __all__ = [
     "SearchResult",
     "SparseEmbedding",
     "get_embedder",
+    "get_token_counter",
 ]

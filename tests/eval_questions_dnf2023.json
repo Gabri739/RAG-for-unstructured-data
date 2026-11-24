@@ -78,5 +78,685 @@
     "expected_pages": [52],
     "expected_keywords": ["218.484", "2023"],
     "expected_answer": "218.484 polizze (esistenti al 31.12.2023; nel 2022 erano 85.259)."
+  },
+  {
+    "id": "Q11",
+    "category": "testo",
+    "question": "A quante persone era rivolto l'evento di inizio anno in cui l'azienda ha illustrato i risultati del 2022 e la direzione strategica successiva?",
+    "expected_type": "text",
+    "expected_pages": [7],
+    "expected_keywords": ["1200", "24 febbraio 2023"],
+    "expected_answer": "Oltre 1200 tra dipendenti, agenti e rappresentanti del mondo ACI (Convention aziendale del 24 febbraio 2023).",
+    "source_context": "il 24 febbraio 2023 si è svolta la Convention aziendale, un evento dedicato a oltre 1200 tra dipendenti, Agenti e rappresentanti del mondo ACI"
+  },
+  {
+    "id": "Q12",
+    "category": "testo",
+    "question": "Con quali modalità il management, il personale e gli assicurati sono stati interpellati per stimare gli impatti di sostenibilità?",
+    "expected_type": "text",
+    "expected_pages": [8],
+    "expected_keywords": ["6 interviste", "survey online"],
+    "expected_answer": "6 interviste one-to-one con il management e due survey online, una a un panel di dipendenti (chi ha svolto nel 2023 il corso di formazione CSR) e una a un panel di clienti.",
+    "source_context": "sono state realizzate 6 interviste one-to-one con il management [...] Sono altresì state realizzate due survey online dirette rispettivamente a un panel di dipendenti"
+  },
+  {
+    "id": "Q13",
+    "category": "testo",
+    "question": "Qual è il punteggio minimo perché un tema di sostenibilità venga considerato rilevante e chi ha convalidato il risultato finale?",
+    "expected_type": "text",
+    "expected_pages": [9],
+    "expected_keywords": ["2,5", "14 dicembre 2023"],
+    "expected_answer": "La soglia di rilevanza è 2,5 su una scala da 1 a 5; l'esito è stato approvato dal Consiglio di Amministrazione il 14 dicembre 2023.",
+    "source_context": "hanno superato la soglia di rilevanza pari a 2,5 su una scala da 1 a 5. Il Consiglio di Amministrazione ha approvato l’esito della Impact Materiality in data 14 dicembre 2023."
+  },
+  {
+    "id": "Q14",
+    "category": "testo",
+    "question": "Di quanto dovrebbe espandersi l'economia mondiale nel 2024 secondo il Fondo Monetario?",
+    "expected_type": "text",
+    "expected_pages": [16],
+    "expected_keywords": ["3,1%", "FMI"],
+    "expected_answer": "Intorno al 3,1% (previsioni ufficiali FMI per il 2024).",
+    "source_context": "Le previsioni ufficiali del Fondo Monetario Internazionale (FMI) indicano una crescita globale intorno al 3,1% nel 2024."
+  },
+  {
+    "id": "Q15",
+    "category": "testo",
+    "question": "Chi sono i proprietari della compagnia e quanto possiede ciascuno?",
+    "expected_type": "text",
+    "expected_pages": [22],
+    "expected_keywords": ["14,65%", "80%"],
+    "expected_answer": "ACI – Automobile Club d'Italia 80%, Società Reale Mutua Assicurazioni 14,65%, Generali Italia SpA 5%, più azioni proprie e degli Automobile Club Provinciali per lo 0,35%.",
+    "source_context": "ACI – Automobile Club d’Italia all’80%; Società Reale Mutua Assicurazioni al 14,65%; Generali Italia SpA al 5%"
+  },
+  {
+    "id": "Q16",
+    "category": "testo",
+    "question": "Quanto pesa la presenza delle donne negli organi amministrativi delle due compagnie?",
+    "expected_type": "text",
+    "expected_pages": [24],
+    "expected_keywords": ["40%", "33%"],
+    "expected_answer": "Il 40% dei consiglieri di amministrazione in Sara Assicurazioni e il 33% in Sara Vita.",
+    "source_context": "In Sara Assicurazioni il 40% dei Consiglieri di amministrazione è di genere femminile, mentre in Sara Vita al genere femminile è riservato il 33% della rappresentanza."
+  },
+  {
+    "id": "Q17",
+    "category": "testo",
+    "question": "Quante minacce legate alla sostenibilità sono state esaminate per la capogruppo e quante per la compagnia vita?",
+    "expected_type": "text",
+    "expected_pages": [27],
+    "expected_keywords": ["123", "101"],
+    "expected_answer": "123 rischi analizzati per Sara Assicurazioni e 101 per Sara Vita (su una matrice complessiva di 175).",
+    "source_context": "composta da 175 potenziali rischi, riferibili al Gruppo Sara. [...] ottenendo 123 rischi da analizzare. [...] sono stati valutati, dunque, 101 rischi di sostenibilità."
+  },
+  {
+    "id": "Q18",
+    "category": "testo",
+    "question": "Quali problemi ambientali potrebbero far perdere valore al debito pubblico detenuto dal Gruppo?",
+    "expected_type": "text",
+    "expected_pages": [27],
+    "expected_keywords": ["Water", "Biodiversity"],
+    "expected_answer": "Gli eventi collegati ai fattori di sostenibilità \"Water & Marine Resources\" e \"Biodiversity and ecosystem\" (rischio di mercato, esposizione media).",
+    "source_context": "riduzione del valore dei titoli di Stato in portafoglio che potrebbero subire un impatto negativo da eventi collegati ai fattori di sostenibilità “Water & Marine Resources” e “Biodiversity and ecosystem”"
+  },
+  {
+    "id": "Q19",
+    "category": "testo",
+    "question": "Nel corso dell'anno il Gruppo è stato multato dall'autorità che vigila sui dati personali?",
+    "expected_type": "text",
+    "expected_pages": [42],
+    "expected_keywords": ["Garante", "sanzioni"],
+    "expected_answer": "No: nel 2023 non sono pervenute sanzioni né richieste di informazioni dal Garante per la protezione dei dati personali.",
+    "source_context": "non sono pervenute sanzioni o richieste di informazioni dall’Autorità Garante per la protezione dei dati personali"
+  },
+  {
+    "id": "Q20",
+    "category": "testo",
+    "question": "Quanto tempo aspetta in media un cliente insoddisfatto prima di ricevere riscontro dalle due compagnie?",
+    "expected_type": "text",
+    "expected_pages": [51],
+    "expected_keywords": ["45 giorni", "22"],
+    "expected_answer": "22 giorni per Sara Assicurazioni e 20 per Sara Vita nel 2023 (il limite IVASS è 45 giorni).",
+    "source_context": "I giorni medi di risposta ai reclami nel 2023 sono stati per Sara Assicurazioni 22 e per Sara Vita 20"
+  },
+  {
+    "id": "Q21",
+    "category": "testo",
+    "question": "Quanti ragazzi ha raggiunto finora il programma di educazione stradale nelle scuole e in quante date si è svolto nel 2023?",
+    "expected_type": "text",
+    "expected_pages": [54],
+    "expected_keywords": ["135.000", "23 tappe"],
+    "expected_answer": "Oltre 135.000 studenti complessivi; 23 tappe tra febbraio e dicembre 2023 (Sara Safe Factor).",
+    "source_context": "degli studenti coinvolti dal progetto nel suo complesso ha superato i 135.000 studenti. [...] articolato in un calendario di 23 tappe"
+  },
+  {
+    "id": "Q22",
+    "category": "testo",
+    "question": "Su quanti professionisti esterni, tra esperti, dottori e legali, può contare il Gruppo per gestire i danni?",
+    "expected_type": "text",
+    "expected_pages": [60],
+    "expected_keywords": ["209 periti", "132"],
+    "expected_answer": "Nel 2023: 209 periti, 132 medici legali e 235 avvocati (oltre a 1.076 carrozzerie convenzionate e 110 informatori).",
+    "source_context": "una rete fiduciaria composta, nel 2023, da 209 periti, 132 medici legali, 235 avvocati, 1.076 carrozzerie convenzionate e 110 informatori."
+  },
+  {
+    "id": "Q23",
+    "category": "testo",
+    "question": "Il Gruppo è diventato più rapido nel pagare i danni tra il 2021 e il 2023?",
+    "expected_type": "text",
+    "expected_pages": [60],
+    "expected_keywords": ["75,5%", "77,2%"],
+    "expected_answer": "Sì: la velocità di liquidazione corrente è passata dal 75,5% (2021) al 76,2% (2022) al 77,2% (2023).",
+    "source_context": "nel corso del 2021 è stata pari al 75,5%, nel 2022 pari al 76,2% e nel 2023 al 77,2%."
+  },
+  {
+    "id": "Q24",
+    "category": "testo",
+    "question": "Che cosa hanno raccolto i colleghi del marketing durante l'attività di gruppo nel bosco e in che quantità?",
+    "expected_type": "text",
+    "expected_pages": [67],
+    "expected_keywords": ["80 kg"],
+    "expected_answer": "Circa 80 kg di rifiuti, durante il team building di ottobre nel bosco Macchia Grande di Manziana.",
+    "source_context": "presso il bosco Macchia Grande di Manziana, si è tenuto il team building [...] sono riusciti a raccogliere circa 80 kg di rifiuti."
+  },
+  {
+    "id": "Q25",
+    "category": "testo",
+    "question": "Che cosa è emerso dalle verifiche sul logorio psicologico del personale?",
+    "expected_type": "text",
+    "expected_pages": [73],
+    "expected_keywords": ["Stress Lavoro Correlato", "basso"],
+    "expected_answer": "Per tutte e tre le categorie (dirigenti, funzionari, impiegati) il rischio da stress lavoro-correlato è risultato basso e quindi non rilevante.",
+    "source_context": "per tutte e tre le categorie di lavoratori il livello di rischio risulta essere basso e quindi non rilevante."
+  },
+  {
+    "id": "Q26",
+    "category": "testo",
+    "question": "Quante giornate a settimana si può lavorare da casa nel 2023?",
+    "expected_type": "text",
+    "expected_pages": [74],
+    "expected_keywords": ["venerdì", "rete liquidativa"],
+    "expected_answer": "3 giorni per i dipendenti della rete liquidativa e 1 giorno (il venerdì) per tutti gli altri.",
+    "source_context": "Nel 2023, con la ripresa della normalità, i giorni di SW sono 3 per i dipendenti della rete liquidativa e 1 (il venerdì) per tutti gli altri."
+  },
+  {
+    "id": "Q27",
+    "category": "testo",
+    "question": "In quali comparti il Gruppo rifiuta in partenza di mettere i propri soldi?",
+    "expected_type": "text",
+    "expected_pages": [82],
+    "expected_keywords": ["ex-ante", "tabacco"],
+    "expected_answer": "Gioco d'azzardo, tabacco, produzione di armi non convenzionali e pornografia.",
+    "source_context": "Il Gruppo Sara esclude inoltre ex-ante l’investimento in società che operano nei settori del gioco d’azzardo, del tabacco, della produzione di armi non convenzionali e della pornografia"
+  },
+  {
+    "id": "Q28",
+    "category": "testo",
+    "question": "Come mai la parte di premi danni considerata ammissibile dalla classificazione verde europea è calata così tanto rispetto all'esercizio prima?",
+    "expected_type": "text",
+    "expected_pages": [102],
+    "expected_keywords": ["8,5%"],
+    "expected_answer": "Per una revisione delle modalità di identificazione delle quote di premi non-vita ammissibili, più dettagliata nel 2023: dall'8,5% del 2022 si è passati all'1,3%.",
+    "source_context": "la quota di ammissibilità riferita all’esercizio 2022 era infatti pari all’8,5% del totale premi non vita contabilizzati): tale flessione si deve ad una revisione delle modalità di identificazione delle quote di premi non-vita da considerare ammissibili"
+  },
+  {
+    "id": "Q29",
+    "category": "tabella",
+    "question": "Qual è l'indice di copertura del requisito patrimoniale minimo del Gruppo?",
+    "expected_type": "table",
+    "expected_pages": [33],
+    "expected_keywords": ["750,0%"],
+    "expected_answer": "750,0% (Indice di copertura del MCR).",
+    "source_context": "Indice di copertura del MCR 750,0%"
+  },
+  {
+    "id": "Q30",
+    "category": "tabella",
+    "question": "Quanto hanno reso le attività finanziarie nel 2023 e quanto vale in totale la ricchezza prodotta nello stesso anno?",
+    "expected_type": "table",
+    "expected_pages": [34],
+    "expected_keywords": ["Proventi finanziari", "111", "902"],
+    "expected_answer": "Proventi finanziari per 111 milioni di euro (49 nel 2022); totale valore generato 902 milioni (859 nel 2022).",
+    "source_context": "Proventi finanziari 89 49 111 [...] Totale Valore Generato 898 859 902"
+  },
+  {
+    "id": "Q31",
+    "category": "tabella",
+    "question": "Quanti intermediari hanno frequentato il corso sulle segnalazioni di illeciti nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [37],
+    "expected_keywords": ["3.194"],
+    "expected_answer": "3.194 partecipanti al corso \"La disciplina del whistleblowing ed il D.lgs. n. 24/2023\".",
+    "source_context": "La disciplina del whistleblowing ed il D.lgs. n. 24/2023 3.194"
+  },
+  {
+    "id": "Q32",
+    "category": "tabella",
+    "question": "Quanti impiegati sono stati formati contro la corruzione nel 2022 e nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [40],
+    "expected_keywords": ["Impiegati", "26", "395"],
+    "expected_answer": "26 impiegati nel 2022 (7%) e 395 nel 2023 (100%).",
+    "source_context": "Impiegati 4 1% 26 7% 395 100%"
+  },
+  {
+    "id": "Q33",
+    "category": "tabella",
+    "question": "Quante imposte sul reddito ha effettivamente versato il Gruppo nel 2022?",
+    "expected_type": "table",
+    "expected_pages": [41],
+    "expected_keywords": ["8.587.653,59"],
+    "expected_answer": "8.587.653,59 euro corrisposti in contanti nel 2022 (39.411.961,93 nel 2021; 18.953.058,11 nel 2023).",
+    "source_context": "Imposte sul reddito delle società corrisposte in contanti (€) 39.411.961,93 8.587.653,59 18.953.058,11"
+  },
+  {
+    "id": "Q34",
+    "category": "tabella",
+    "question": "Quanti assicurati aveva il comparto vita nel 2023 e quanti la divisione plurimandataria ALA?",
+    "expected_type": "table",
+    "expected_pages": [47],
+    "expected_keywords": ["47.985", "52.275"],
+    "expected_answer": "47.985 clienti ramo vita e 52.275 clienti ALA.",
+    "source_context": "Di cui clienti ramo vita 46.020 47.155 47.985 Di cui clienti ALA* 68.709 59.896 52.275"
+  },
+  {
+    "id": "Q35",
+    "category": "tabella",
+    "question": "Come sono cambiati gli ingressi al preventivatore online fra il 2021 e il 2023?",
+    "expected_type": "table",
+    "expected_pages": [49],
+    "expected_keywords": ["229.779", "395.310"],
+    "expected_answer": "Da 229.779 (2021) a 296.688 (2022) a 395.310 (2023).",
+    "source_context": "Accessi al Preventivatore 229.779 296.688 395.310"
+  },
+  {
+    "id": "Q36",
+    "category": "tabella",
+    "question": "Quanti reclami ha rigettato Sara Assicurazioni nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [50],
+    "expected_keywords": ["Respinti", "625"],
+    "expected_answer": "625 reclami respinti da Sara Assicurazioni (4 da Sara Vita, 629 in totale).",
+    "source_context": "Respinti 791 14 805 595 5 600 625 4 629"
+  },
+  {
+    "id": "Q37",
+    "category": "tabella",
+    "question": "Quante contestazioni ha mosso l'IVASS al Gruppo nel 2021 e quante nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [51],
+    "expected_keywords": ["Atto di contestazione", "3"],
+    "expected_answer": "3 atti di contestazione nel 2021 e 0 nel 2023 (1 nel 2022).",
+    "source_context": "Atto di contestazione 3 1 0"
+  },
+  {
+    "id": "Q38",
+    "category": "tabella",
+    "question": "Quanti contratti della polizza che premia lo stile di guida erano attivi a fine 2023?",
+    "expected_type": "table",
+    "expected_pages": [53],
+    "expected_keywords": ["35.298"],
+    "expected_answer": "35.298 polizze Guido Bene (25.233 nel 2022).",
+    "source_context": "Polizza Guido Bene* 21.398 25.233 35.298"
+  },
+  {
+    "id": "Q39",
+    "category": "tabella",
+    "question": "Quante agenzie aveva il Gruppo in Puglia e in Lombardia nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [55],
+    "expected_keywords": ["Puglia", "58"],
+    "expected_answer": "58 in Puglia e 67 in Lombardia.",
+    "source_context": "Lombardia 66 64 67 [...] Puglia 52 57 58"
+  },
+  {
+    "id": "Q40",
+    "category": "tabella",
+    "question": "Di quanto è cresciuto il numero dei subagenti dal 2022 al 2023?",
+    "expected_type": "table",
+    "expected_pages": [55, 56],
+    "expected_keywords": ["Subagenti", "2.252"],
+    "expected_answer": "Da 1.591 a 2.252 subagenti (+661).",
+    "source_context": "Subagenti* 2.024 1.591 2.252"
+  },
+  {
+    "id": "Q41",
+    "category": "tabella",
+    "question": "Quanti lavoratori avevano un contratto a termine alla fine del 2023?",
+    "expected_type": "table",
+    "expected_pages": [62],
+    "expected_keywords": ["tempo determinato", "13"],
+    "expected_answer": "13 dipendenti a tempo determinato (8 uomini e 5 donne); erano 2 nel 2022.",
+    "source_context": "Dipendenti a tempo determinato 2 2 13"
+  },
+  {
+    "id": "Q42",
+    "category": "tabella",
+    "question": "Quanti impiegati con meno di trent'anni lavoravano nel Gruppo nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [62, 63],
+    "expected_keywords": ["5,8%"],
+    "expected_answer": "23 impiegati sotto i 30 anni, pari al 5,8% (14 uomini e 9 donne).",
+    "source_context": "Numero totale di impiegati 391 100,0% 394 100,0% 395 100,0% [...] Sotto i 30 anni di età 14 3,6% 17 4,3% 23 5,8%"
+  },
+  {
+    "id": "Q43",
+    "category": "tabella",
+    "question": "Quante ore di corso ha seguito in media ogni dipendente donna nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [66],
+    "expected_keywords": ["11.415", "45"],
+    "expected_answer": "45 ore medie pro capite (11.415 ore complessive).",
+    "source_context": "dipendenti donne 4.840 19 5.970 24 11.415 45"
+  },
+  {
+    "id": "Q44",
+    "category": "tabella",
+    "question": "Quante ore hanno lavorato in tutto i dipendenti nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [72],
+    "expected_keywords": ["1.084.504"],
+    "expected_answer": "1.084.504 ore lavorate dai dipendenti nel 2023.",
+    "source_context": "Ore lavorate 1.123.607 1.082.040 1.084.504"
+  },
+  {
+    "id": "Q45",
+    "category": "tabella",
+    "question": "Quanti padri si sono assentati per accudire i figli piccoli nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [75],
+    "expected_keywords": ["congedo parentale", "21"],
+    "expected_answer": "9 uomini hanno usufruito del congedo parentale nel 2023 (su 21 dipendenti in totale).",
+    "source_context": "Dipendenti che hanno usufruito del congedo parentale 12 17 21 Di cui uomini 5 8 9"
+  },
+  {
+    "id": "Q46",
+    "category": "tabella",
+    "question": "Quante ore di lavoro si sono perse per sciopero nel 2023 e quanti dipendenti sono iscritti a un sindacato?",
+    "expected_type": "table",
+    "expected_pages": [77],
+    "expected_keywords": ["sciopero", "25"],
+    "expected_answer": "25 ore perse per sciopero, dispute o chiusure; 387 dipendenti iscritti a sindacato (62%).",
+    "source_context": "Dipendenti iscritti a sindacato 408 394 387 [...] Numero ore perse per sciopero, dispute, chiusura aziendale nel corso dell'anno 32 0 25"
+  },
+  {
+    "id": "Q47",
+    "category": "tabella",
+    "question": "Quanta energia da gasolio per le auto è stata consumata nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [79],
+    "expected_keywords": ["993,6"],
+    "expected_answer": "993,6 GJ di carburante diesel per autovetture (1.085,4 nel 2022).",
+    "source_context": "Carburante autovetture - diesel 1.505,5 1.085,4 993,6"
+  },
+  {
+    "id": "Q48",
+    "category": "tabella",
+    "question": "A quanto ammontano le emissioni dirette di gas serra nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [79, 80],
+    "expected_keywords": ["Scope 1", "580"],
+    "expected_answer": "580 tonnellate di CO2 equivalenti (Scope 1); 518 nel 2022.",
+    "source_context": "Scope 1 476 518 580"
+  },
+  {
+    "id": "Q49",
+    "category": "tabella",
+    "question": "Quanta acqua è stata prelevata dalla rete pubblica nel 2023?",
+    "expected_type": "table",
+    "expected_pages": [80],
+    "expected_keywords": ["9.314"],
+    "expected_answer": "9.314 metri cubi (7.605 nel 2022).",
+    "source_context": "Servizi idrici municipali 7.352,50 7.605 9.314"
+  },
+  {
+    "id": "Q50",
+    "category": "tabella",
+    "question": "Quanto è grande l'immobile industriale che il Gruppo possiede a Monterotondo?",
+    "expected_type": "table",
+    "expected_pages": [80, 81],
+    "expected_keywords": ["Monterotondo", "8.576"],
+    "expected_answer": "8.576 mq commerciali (Monterotondo Scalo, via L. Da Vinci 1).",
+    "source_context": "Monterotondo Scalo Via L. Da Vinci 1*** Industriale 8.576"
+  },
+  {
+    "id": "Q51",
+    "category": "tabella",
+    "question": "Quanti premi danni rientrano nella classificazione verde europea senza però essere ecosostenibili?",
+    "expected_type": "table",
+    "expected_pages": [102],
+    "expected_keywords": ["9.117.411", "1,3%"],
+    "expected_answer": "9.117.411 euro, pari all'1,3% dei premi lordi contabilizzati non vita.",
+    "source_context": "9.117.411 1,3%"
+  },
+  {
+    "id": "Q52",
+    "category": "sigla",
+    "question": "Qual è l'NPS emerso dalla ricerca Agent Satisfaction?",
+    "expected_type": "text",
+    "expected_pages": [56],
+    "expected_keywords": ["+34,6"],
+    "expected_answer": "+34,6 su scala -100/+100, in incremento rispetto agli ultimi anni.",
+    "source_context": "NPS, Net Promoter Score o indice di advocacy, su scala -100/+100) del +34,6"
+  },
+  {
+    "id": "Q53",
+    "category": "sigla",
+    "question": "Quale prodotto è stato verificato secondo la norma ISO/TS 17033/2019 e da quale ente?",
+    "expected_type": "text",
+    "expected_pages": [54],
+    "expected_keywords": ["17033", "Bureau Veritas"],
+    "expected_answer": "La polizza Guido Bene, verificata da Bureau Veritas.",
+    "source_context": "validato e verificato secondo lo standard ISO/TS 17033/2019 da Bureau Veritas"
+  },
+  {
+    "id": "Q54",
+    "category": "sigla",
+    "question": "Tra quali percentuali del SCR deve stare il MCR?",
+    "expected_type": "text",
+    "expected_pages": [33],
+    "expected_keywords": ["25%", "45%"],
+    "expected_answer": "Tra il 25% e il 45% del SCR.",
+    "source_context": "il MCR è calcolato sulla base di fattori predefiniti, ma deve comunque cadere tra il 25% e il 45% del SCR."
+  },
+  {
+    "id": "Q55",
+    "category": "sigla",
+    "question": "Che cosa disciplina il documento PRO-SA-70-V04?",
+    "expected_type": "text",
+    "expected_pages": [69],
+    "expected_keywords": ["PRO-SA-70"],
+    "expected_answer": "È la Procedura per la Gestione del sistema di remunerazione del personale: disciplina ruoli, responsabilità e principali attività del processo, secondo la Politica di Remunerazione.",
+    "source_context": "Procedura per la Gestione del sistema di remunerazione del personale PRO-SA-70-V04 (revisionata nel 2024) in cui sono disciplinati ruoli, responsabilità e principali attività inerenti al processo"
+  },
+  {
+    "id": "Q56",
+    "category": "sigla",
+    "question": "Che cosa copre la LTC Sara Prenditi Cura?",
+    "expected_type": "text",
+    "expected_pages": [52],
+    "expected_keywords": ["Sara Prenditi Cura", "rendita mensile"],
+    "expected_answer": "Il rischio di perdita dell'autosufficienza, con una rendita mensile in caso di non autosufficienza a qualsiasi età per malattia, infortunio o invecchiamento.",
+    "source_context": "LTC - Sara Prenditi Cura dedicato al rischio della perdita della autosufficienza offrendo un aiuto concreto tramite una rendita mensile"
+  },
+  {
+    "id": "Q57",
+    "category": "sigla",
+    "question": "Di quanto si possono ridurre gli incidenti grazie agli ADAS?",
+    "expected_type": "text",
+    "expected_pages": [53],
+    "expected_keywords": ["ADAS", "73%"],
+    "expected_answer": "Del 73% delle cause di incidente, con un semplice allarme sonoro 1,5 secondi prima dell'impatto.",
+    "source_context": "grazie ai sistemi ADAS (Advanced Driver Assistance Systems), è possibile ridurre del 73% le cause di incidente stradale attraverso un semplice allarme sonoro 1,5 secondi prima dell’impatto."
+  },
+  {
+    "id": "Q58",
+    "category": "sigla",
+    "question": "Quanti emittenti di Sara Assicurazioni sono stati mappati con MSCI e qual è il rating medio?",
+    "expected_type": "text",
+    "expected_pages": [82],
+    "expected_keywords": ["MSCI", "77 emittenti"],
+    "expected_answer": "69 su 77 emittenti, per una copertura del 95% del Market Value e un rating medio A+.",
+    "source_context": "Su 77 emittenti totali, 69 sono stati mappati con l’utilizzo di MSCI, per una copertura complessiva del 95% del MV ed un rating medio pari ad A+."
+  },
+  {
+    "id": "Q59",
+    "category": "sigla",
+    "question": "A cosa servono i fondi FBA?",
+    "expected_type": "text",
+    "expected_pages": [66],
+    "expected_keywords": ["FBA"],
+    "expected_answer": "Sono Fondi Interprofessionali usati per erogare la formazione contenendo l'impatto economico.",
+    "source_context": "Il Gruppo eroga la formazione utilizzando i Fondi Interprofessionali (FBA) in modo da contenere l'impatto economico"
+  },
+  {
+    "id": "Q60",
+    "category": "sigla",
+    "question": "Cosa dichiara il Gruppo in relazione al GRI 205-1?",
+    "expected_type": "text",
+    "expected_pages": [38],
+    "expected_keywords": ["100%", "risk assessment", "corruzione"],
+    "expected_answer": "Il 100% dei processi aziendali è soggetto a valutazione dei rischi di corruzione; l'ultimo assessment ha evidenziato un adeguato presidio.",
+    "source_context": "[GRI 205-1] Il 100% dei processi aziendali sono soggetti, nell’ambito delle attività di risk assessment, a valutazione con riferimento ai rischi afferenti alla corruzione."
+  },
+  {
+    "id": "Q61",
+    "category": "sigla",
+    "question": "Quante imprese sono state selezionate nel bando #Conciliamo?",
+    "expected_type": "text",
+    "expected_pages": [76],
+    "expected_keywords": ["127"],
+    "expected_answer": "127 aziende in graduatoria, tra cui Sara Assicurazioni, su migliaia di candidature.",
+    "source_context": "La candidatura è stata presentata da migliaia di aziende in tutta Italia e solo in 127 si sono aggiudicate un posto in graduatoria."
+  },
+  {
+    "id": "Q62",
+    "category": "sigla",
+    "question": "A cosa serve il KID previsto per i PRIIPs?",
+    "expected_type": "text",
+    "expected_pages": [49],
+    "expected_keywords": ["KID"],
+    "expected_answer": "È un documento sintetico standard con le informazioni chiave, qualitative e quantitative, per far comprendere al meglio il prodotto agli investitori al dettaglio.",
+    "source_context": "la predisposizione, tramite formato standard, di un documento sintetico (KID) contenente le informazioni chiave, qualitative e quantitative, necessarie agli investitori al dettaglio per comprendere al meglio il prodotto."
+  },
+  {
+    "id": "Q63",
+    "category": "sigla",
+    "question": "Quali dati per il 2023 sono rendicontati sotto il GRI 207-4?",
+    "expected_type": "table",
+    "expected_pages": [41],
+    "expected_keywords": ["629", "91.190.577,05"],
+    "expected_answer": "La rendicontazione fiscale di Gruppo: tra l'altro 629 dipendenti, ricavi da terze parti 823.678.576,63 euro, utile lordo 91.190.577,05 euro, imposte versate 18.953.058,11 euro.",
+    "source_context": "[GRI 207-4] RENDICONTAZIONE FISCALE DI GRUPPO AL 31.12.2023 [...] Utile/perdita al lordo delle imposte (€) 66.317.074,95 50.886.408,76 91.190.577,05"
+  },
+  {
+    "id": "Q64",
+    "category": "fuori_perimetro",
+    "question": "Quanti dipendenti aveva il Gruppo Sara alla fine del 2024?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: il documento si ferma al 31.12.2023.",
+    "source_context": "Vicino a p. 62 (629 dipendenti al 31 dicembre 2023): l'anno 2024 non è rendicontato."
+  },
+  {
+    "id": "Q65",
+    "category": "fuori_perimetro",
+    "question": "A quanto ammontano le emissioni Scope 3 del Gruppo nel 2023?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: sono rendicontati solo Scope 1 e Scope 2.",
+    "source_context": "Vicino a p. 78-80: il testo 'Scope 3' non compare mai."
+  },
+  {
+    "id": "Q66",
+    "category": "fuori_perimetro",
+    "question": "Quante polizze RiparaOK sono state vendute in Lombardia nel 2023?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: il dato RiparaOK non è suddiviso per regione.",
+    "source_context": "Vicino a p. 52 (totale nazionale RiparaOK) e p. 55 (agenzie per regione)."
+  },
+  {
+    "id": "Q67",
+    "category": "fuori_perimetro",
+    "question": "Qual è stato il compenso annuo del Direttore Generale nel 2023?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: la politica di remunerazione è descritta senza importi individuali.",
+    "source_context": "Vicino a p. 69 (politica di remunerazione), ma senza importi."
+  },
+  {
+    "id": "Q68",
+    "category": "fuori_perimetro",
+    "question": "In che anno Sara Assicurazioni è stata quotata in Borsa?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: non si parla di quotazione della società.",
+    "source_context": "Vicino a p. 22, che cita solo il Codice Preda 'per le società quotate'."
+  },
+  {
+    "id": "Q69",
+    "category": "fuori_perimetro",
+    "question": "Quante polizze per cani e gatti sono state stipulate nel 2023?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: non sono citati prodotti per animali domestici.",
+    "source_context": "Vicino a p. 52-53 (tabelle dei prodotti): nessun prodotto per animali."
+  },
+  {
+    "id": "Q70",
+    "category": "fuori_perimetro",
+    "question": "Qual è la quota di mercato di Sara Assicurazioni nel ramo RC Auto?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: non è riportata alcuna quota di mercato.",
+    "source_context": "L'espressione 'quota di mercato' non compare mai."
+  },
+  {
+    "id": "Q71",
+    "category": "fuori_perimetro",
+    "question": "Quante tonnellate di rifiuti hanno riciclato le sedi del Gruppo nel 2023?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: i rifiuti prodotti o riciclati dalle sedi non sono quantificati.",
+    "source_context": "Vicino a p. 67 (80 kg raccolti nel team building) e p. 80 (materiali): dato diverso."
+  },
+  {
+    "id": "Q72",
+    "category": "fuori_perimetro",
+    "question": "Quanto paga il Gruppo di affitto per le sue sedi?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: i canoni di affitto delle sedi non sono riportati.",
+    "source_context": "Vicino a p. 17 (canoni di locazione del mercato immobiliare) e p. 79-81 (sedi e immobili): nessun importo."
+  },
+  {
+    "id": "Q73",
+    "category": "fuori_perimetro",
+    "question": "Quanto ha speso il Gruppo per la sicurezza informatica nel 2023?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: la sicurezza informatica è citata senza importi di spesa.",
+    "source_context": "Vicino a p. 19 (investimenti IT) e p. 42 (ore di formazione cyber), ma senza importi."
+  },
+  {
+    "id": "Q74",
+    "category": "fuori_perimetro",
+    "question": "Che rating ha assegnato Standard & Poor's a Sara Assicurazioni?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: non è citato alcun rating di credito della compagnia.",
+    "source_context": "Vicino a p. 82-83: gli unici rating sono quelli ESG degli emittenti in portafoglio."
+  },
+  {
+    "id": "Q75",
+    "category": "fuori_perimetro",
+    "question": "Quanti sinistri RC Auto sono stati denunciati nel 2023?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: il numero di sinistri denunciati non è riportato.",
+    "source_context": "Vicino a p. 60 (rete e velocità di liquidazione), ma senza numero di sinistri."
+  },
+  {
+    "id": "Q76",
+    "category": "fuori_perimetro",
+    "question": "Quanti dipendenti del Gruppo hanno una laurea?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: i dipendenti non sono suddivisi per titolo di studio.",
+    "source_context": "Vicino a p. 62-64 (dipendenti per genere, età e inquadramento)."
+  },
+  {
+    "id": "Q77",
+    "category": "fuori_perimetro",
+    "question": "Quante auto elettriche assicura il Gruppo?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: il numero di veicoli elettrici assicurati non è riportato.",
+    "source_context": "Vicino a p. 79 (consumi delle auto aziendali elettriche): dato diverso."
+  },
+  {
+    "id": "Q78",
+    "category": "fuori_perimetro",
+    "question": "Di quanto sono aumentati i premi dell'assicurazione contro terremoti e alluvioni?",
+    "expected_type": "none",
+    "expected_pages": [],
+    "expected_keywords": [],
+    "expected_answer": "ASSENTE NEL DOCUMENTO: non sono riportati premi per coperture terremoto o alluvione.",
+    "source_context": "Vicino a p. 17-18 (eventi catastrofali) e p. 101: nessun importo, e le parole 'terremoto' e 'alluvione' non compaiono."
   }
 ]

@@ -10,9 +10,10 @@ applica `save_table_images(doc)` e salva:
 I percorsi nei metadati sono relativi a <out> (es. "table_images/t12_p44.png").
 
 Uso:
-    uv run python scripts/03_save_table_images.py [cartella_output]
+    uv run python scripts/03_save_table_images.py cartella_output
 """
 
+import argparse
 import dataclasses
 import json
 import sys
@@ -26,7 +27,9 @@ sys.path.insert(0, str(ROOT))
 
 from src.extractors.table_images import save_table_images  # noqa: E402
 
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data/processed/docling/dnf2023"
+parser = argparse.ArgumentParser(description="Salvataggio delle immagini delle tabelle")
+parser.add_argument("out", type=Path, help="cartella prodotta dallo Step 2")
+OUT = parser.parse_args().out
 DOC_JSON = OUT / "document_fused.json"
 
 if not DOC_JSON.exists():

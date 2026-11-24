@@ -6,14 +6,16 @@ Esegue in sequenza in memoria (salvando tutti gli artefatti intermedi su disco):
   3. Salvataggio su disco dei ritagli PNG delle tabelle (`save_table_images`)
   4. Chunking strutturato per intestazioni e righe tabella (`MarkdownChunker`)
   5. Calcolo degli embedding `BAAI/bge-m3` (sia `dense` 1024-d sia `sparse`) e salvataggio su Qdrant
-  6. Valutazione quantitativa del retrieval sulle domande di test (`06_eval_retrieval.py`)
+  6. Valutazione del retrieval (`06_eval_retrieval.py`), solo se si indica un file di domande
 
 Uso:
-    python scripts/run_full_pipeline.py [percorso_pdf] [cartella_output] [max_table_rows]
+    python scripts/run_full_pipeline.py percorso.pdf cartella_output [--max-table-rows 25]
+        [--reference-codes gri] [--questions domande.json]
 """
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import json
 import sys
@@ -30,15 +32,20 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from src.chunkers import MarkdownChunker  # noqa: E402
-from src.extractors.docling_parser import get_converter  # noqa: E402
+from src.chunkers import REFERENCE_PATTERNS, MarkdownChunker  # noqa: E402
+from src.extractors.docling_parser import convert_pdf  # noqa: E402
 from src.extractors.table_fusion import fuse_document_tables  # noqa: E402
-from src.extractors.table_images import MARKDOWN_BLOCKED_META, save_table_images  # noqa: E402
+from src.extractors.table_images import (  # noqa: E402
+    MARKDOWN_BLOCKED_META,
+    export_table_markdown,
+    save_table_images,
+)
 from src.vectorstore import (  # noqa: E402
     DEFAULT_COLLECTION_NAME,
     DEFAULT_QDRANT_PATH,
     QdrantVectorStore,
     get_embedder,
+    get_token_counter,
 )
 
 
@@ -47,21 +54,26 @@ def log(msg: str) -> None:
 
 
 def main() -> None:
-    pdf_path = (
-        Path(sys.argv[1])
-        if len(sys.argv) > 1
-        else ROOT / "data/raw/20260511_131038/source.pdf"
+    parser = argparse.ArgumentParser(description="Pipeline completa su un PDF")
+    parser.add_argument("pdf", type=Path, help="PDF da elaborare")
+    parser.add_argument("out", type=Path, help="cartella di output (il nome diventa il doc_id)")
+    parser.add_argument("--max-table-rows", type=int, default=25)
+    parser.add_argument(
+        "--reference-codes",
+        nargs="*",
+        default=[],
+        choices=sorted(REFERENCE_PATTERNS),
+        help="codici di riferimento da riconoscere (default: nessuno)",
     )
-    out_dir = (
-        Path(sys.argv[2])
-        if len(sys.argv) > 2
-        else ROOT / "data/processed/docling/dnf2023"
-    )
-    max_table_rows = int(sys.argv[3]) if len(sys.argv) > 3 else 25
-    doc_id = out_dir.name
+    parser.add_argument("--questions", type=Path, default=None, help="domande per la valutazione")
+    args = parser.parse_args()
+    pdf_path, out_dir, max_table_rows = args.pdf, args.out, args.max_table_rows
+    doc_id = out_dir.resolve().name
 
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF non trovato: {pdf_path}")
+    if args.questions is not None and not args.questions.exists():
+        raise FileNotFoundError(f"File domande non trovato: {args.questions}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     t_pipeline_start = time.perf_counter()
@@ -75,14 +87,14 @@ def main() -> None:
     # ------------------------------------------------------------------
     log("STEP 1/6 - Caricamento converter Docling e conversione integrale del PDF...")
     t0 = time.perf_counter()
-    converter = get_converter()
-    doc = converter.convert(pdf_path).document
+    doc, ocr_pages = convert_pdf(pdf_path)
     parse_s = time.perf_counter() - t0
     n_pages = len(doc.pages)
     raw_tables = len(doc.tables)
     log(
         f"STEP 1/6 completato in {parse_s:.1f}s ({parse_s / max(n_pages, 1):.2f}s/pag) | "
-        f"Pagine: {n_pages} | Tabelle grezze rilevate: {raw_tables}"
+        f"Pagine: {n_pages} | Tabelle grezze rilevate: {raw_tables} | "
+        f"Pagine con OCR: {ocr_pages or 'nessuna'}"
     )
 
     # ------------------------------------------------------------------
@@ -132,7 +144,7 @@ def main() -> None:
         pages = sorted({p.page_no for p in t.prov})
         p_tag = f"p{pages[0]}" if len(pages) == 1 else f"p{pages[0]}-{pages[-1]}"
         (fused_md_dir / f"t{i}_{p_tag}.md").write_text(
-            t.export_to_markdown(doc=doc), encoding="utf-8"
+            export_table_markdown(t, doc), encoding="utf-8"
         )
 
     # Rimuove le immagini intere di pagina base64 prima di serializzare il JSON su disco
@@ -149,6 +161,7 @@ def main() -> None:
                 "parse_seconds": round(parse_s, 2),
                 "seconds_per_page": round(parse_s / max(n_pages, 1), 3),
                 "device": "cuda" if cuda else "cpu",
+                "ocr_pages": ocr_pages,
                 "raw_tables": raw_tables,
                 "fused_tables": fusion_report.fused_table_count,
                 "merged_chains": len(fusion_report.merged_chains),
@@ -169,6 +182,8 @@ def main() -> None:
         chunk_size=1500,
         chunk_overlap=200,
         max_table_rows=max_table_rows,
+        count_tokens=get_token_counter(),
+        reference_patterns=[REFERENCE_PATTERNS[name] for name in args.reference_codes],
     )
     chunks = chunker.chunk_document(
         doc,
@@ -216,11 +231,6 @@ def main() -> None:
         collection_name=DEFAULT_COLLECTION_NAME,
         path=ROOT / DEFAULT_QDRANT_PATH,
     )
-    # Rimuove eventuali chunk del precedente mini-test su 2 pagine per evitare duplicati
-    removed_test = store.delete_document("dnf2023_test_p43_44")
-    if removed_test:
-        log(f"  Rimossi {removed_test} chunk di test ('dnf2023_test_p43_44') da Qdrant.")
-
     idx_report = store.index_chunks(
         chunks_dicts,
         embedder=embedder,
@@ -236,10 +246,12 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # STEP 6: Valutazione Retrieval sul documento completo
+    # STEP 6: Valutazione Retrieval sul documento completo (solo su richiesta)
     # ------------------------------------------------------------------
-    questions_path = ROOT / "tests/eval_questions_dnf2023.json"
-    if questions_path.exists():
+    questions_path = args.questions
+    if questions_path is None:
+        log("STEP 6/6 saltato: nessun file di domande indicato (--questions)")
+    else:
         log(f"STEP 6/6 - Valutazione retrieval su {questions_path.name}...")
         # Import dinamico dallo script 06 per riutilizzare esattamente la stessa logica
         import importlib.util

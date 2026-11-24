@@ -3,11 +3,14 @@
   - Separazione atomica delle tabelle dal testo discorsivo.
   - Per le tabelle lunghe (`rows > max_table_rows`): suddivisione per blocchi di righe con
     ripetizione dell'intestazione di sezione, del titolo della tabella e dell'header delle
-    colonne in ciascun chunk.
+    colonne in ciascun chunk. Ogni chunk di tabella resta inoltre sotto `max_table_tokens`.
+  - Testate, piè di pagina e numeri di pagina vengono esclusi (riconosciuti per ripetizione).
+  - Codici di riferimento opzionali (`reference_patterns`, es. `[GRI 205-1]`): diventano il campo
+    `reference_codes` dei chunk che seguono, fino al marcatore o al titolo successivo.
   - Metadati completi per chunk:
       * `doc_id`, `source_file`, `chunk_id` (leggibile) e `point_id` (UUIDv5 deterministico per Qdrant)
-      * `pages`, `page_start`, `page_end`, `page_range`
-      * `section`, `chunk_type` (`text` / `table`), `image_paths`
+      * `pages`, `page_start`, `page_end`, `page_range` (pagine del singolo chunk)
+      * `section`, `reference_codes`, `chunk_type` (`text` / `table`), `image_paths`
       * `possible_incomplete_table`, `empty_cells_ratio` (intera tabella),
         `chunk_empty_cells_ratio` (singolo blocco) e `empty_columns` (colonne >= 80% vuote, min 3 righe).
 """
@@ -19,10 +22,14 @@ import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
+from src.extractors.running_text import find_running_text_refs
+
+from .reference_codes import ReferencePattern, format_marker, split_by_markers
 from .table_utils import (
     TableBlock,
+    approx_token_count,
     extract_table_block_from_docling,
     find_all_tables,
     split_large_table,
@@ -30,6 +37,9 @@ from .table_utils import (
 
 if TYPE_CHECKING:
     from docling_core.types.doc import DoclingDocument
+
+# Testo composto solo da un'etichetta tra parentesi quadre (es. "[Rif. 12]"): non è un titolo
+_BRACKETED_RE = re.compile(r"^\[[^\[\]]{1,80}\]$")
 
 CHUNK_UUID_NAMESPACE = uuid.UUID("6ba7b812-9dad-11d1-80b4-00c04fd430c8")  # NAMESPACE_OID
 
@@ -43,7 +53,7 @@ def _format_page_range(pages: list[int]) -> str | None:
 
 
 def _format_section_path(headers: list[str]) -> str:
-    """Formatta lo stack di intestazioni come percorso leggibile (es. `'Cap 1 > [GRI 204-1]'`)."""
+    """Formatta lo stack di intestazioni come percorso leggibile (es. `'Cap 1 > Sezione 1.2'`)."""
     cleaned = [re.sub(r"^#+\s*", "", h).strip() for h in headers if h.strip()]
     return " > ".join(cleaned)
 
@@ -74,6 +84,33 @@ def _load_manifest_image_map(manifest: Path | dict[str, Any] | None) -> dict[int
         if isinstance(t_idx, int) and isinstance(paths, list):
             result[t_idx] = [str(p) for p in paths]
     return result
+
+
+@dataclass
+class _Paragraph:
+    """Paragrafo di testo con la pagina di ciascuna parola (`word_pages` vuota se non nota)."""
+
+    text: str
+    word_pages: list[int] = field(default_factory=list)
+
+
+def _page_at(prov: list[Any], offset: int) -> int | None:
+    """Pagina del carattere `offset`: un paragrafo a cavallo di due pagine ha più `prov`."""
+    page: int | None = None
+    for p in prov:
+        start = p.charspan[0] if getattr(p, "charspan", None) else 0
+        if page is None or offset >= start:
+            page = p.page_no
+    return page
+
+
+def _build_paragraph(text: str, offset: int, prov: list[Any], prefix: str = "") -> _Paragraph:
+    """Crea un `_Paragraph` da un segmento di testo che inizia a `offset` nell'elemento Docling."""
+    pages = [_page_at(prov, offset + m.start()) for m in re.finditer(r"\S+", text)]
+    full_text = f"{prefix} {text.strip()}" if prefix else text.strip()
+    if not pages or any(p is None for p in pages):
+        return _Paragraph(full_text)
+    return _Paragraph(full_text, [pages[0]] * len(prefix.split()) + pages)
 
 
 @dataclass
@@ -120,6 +157,9 @@ class MarkdownChunker:
         chunk_size: int = 1500,
         chunk_overlap: int = 200,
         max_table_rows: int = 25,
+        max_table_tokens: int = 900,
+        count_tokens: Callable[[str], int] | None = None,
+        reference_patterns: Sequence[ReferencePattern] = (),
         empty_cells_threshold: float = 0.35,
         col_empty_threshold: float = 0.80,
         min_rows_for_col_check: int = 3,
@@ -133,6 +173,11 @@ class MarkdownChunker:
             chunk_overlap: Sovrapposizione (in caratteri) tra chunk di testo consecutivi della stessa sezione.
             max_table_rows: Numero massimo di righe dati per chunk di tabella; oltre questa soglia la tabella
                 viene divisa in più chunk per righe, ripetendo header colonne e titolo in ciascuno.
+            max_table_tokens: Numero massimo di token per chunk di tabella (default 900, così il chunk
+                entra per intero sia nell'embedding sia nei 1024 token di un reranker; `0` = nessun limite).
+            count_tokens: Funzione che conta i token (idealmente il tokenizer del modello di embedding);
+                se `None` usa una stima prudente basata sui caratteri.
+            reference_patterns: Formati di codici di riferimento da riconoscere (default nessuno).
             empty_cells_threshold: Frazione globale di celle vuote (`0.0 - 1.0`) oltre la quale una tabella
                 viene marcata con `possible_incomplete_table = True`.
             col_empty_threshold: Frazione di celle vuote (`0.0 - 1.0`) in una singola colonna per segnalarla
@@ -147,6 +192,9 @@ class MarkdownChunker:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.max_table_rows = max_table_rows
+        self.max_table_tokens = max_table_tokens
+        self.count_tokens = count_tokens or approx_token_count
+        self.reference_patterns = tuple(reference_patterns)
         self.empty_cells_threshold = empty_cells_threshold
         self.col_empty_threshold = col_empty_threshold
         self.min_rows_for_col_check = min_rows_for_col_check
@@ -172,33 +220,59 @@ class MarkdownChunker:
             c.metadata["point_id"] = make_point_id(chunk_id)
         return chunks
 
+    @staticmethod
+    def _header_prefix(header_stack: list[str], reference_codes: list[str]) -> str:
+        """Intestazioni di sezione (ed eventuali codici) ripetute all'inizio di ogni chunk."""
+        lines = list(header_stack)
+        if reference_codes:
+            lines.append(format_marker(reference_codes))
+        return "\n".join(lines)
+
     def _build_text_chunks(
         self,
-        paragraphs: list[str],
+        paragraphs: list[_Paragraph],
         header_stack: list[str],
-        pages: list[int],
+        reference_codes: list[str] | None = None,
     ) -> list[Chunk]:
-        """Costruisce uno o più chunk di testo per una sezione, ripetendo le intestazioni in ogni parte."""
-        clean_paras = [p.strip() for p in paragraphs if p and p.strip()]
+        """Costruisce uno o più chunk di testo per una sezione, ripetendo le intestazioni in ogni parte.
+
+        Ogni parte riporta solo le pagine delle parole che contiene.
+        """
+        codes = list(reference_codes or [])
+        clean_paras = [p for p in paragraphs if p.text.strip()]
         if not clean_paras:
             return []
 
-        header_prefix = "\n".join(header_stack)
-        full_body = "\n\n".join(clean_paras)
+        header_prefix = self._header_prefix(header_stack, codes)
+        full_body = "\n\n".join(p.text.strip() for p in clean_paras)
         header_budget = len(header_prefix) + 2 if header_prefix else 0
         max_body_chars = max(200, self.chunk_size - header_budget)
 
-        body_parts = self._split_text_body(full_body, max_body_chars, self.chunk_overlap)
+        words = full_body.split()
+        word_pages: list[int] = []
+        for p in clean_paras:
+            word_pages.extend(p.word_pages)
+        if len(word_pages) != len(words):
+            # Pagine non note per tutte le parole: attribuisci a ogni parte tutte quelle note
+            word_pages = []
+        known_pages = {pg for p in clean_paras for pg in p.word_pages}
+
+        if len(full_body) <= max_body_chars:
+            ranges = [(0, len(words))]
+            body_parts = [full_body]
+        else:
+            ranges = self._split_word_ranges(words, max_body_chars, self.chunk_overlap)
+            body_parts = [" ".join(words[a:b]) for a, b in ranges]
         total_parts = len(body_parts)
-        sorted_pages = sorted(set(pages))
-        page_start = sorted_pages[0] if sorted_pages else None
-        page_end = sorted_pages[-1] if sorted_pages else None
-        page_range = _format_page_range(sorted_pages)
         section_str = _format_section_path(header_stack)
 
         chunks: list[Chunk] = []
-        for idx, body in enumerate(body_parts, start=1):
+        for idx, (body, (start_w, end_w)) in enumerate(zip(body_parts, ranges), start=1):
             content = f"{header_prefix}\n\n{body}" if header_prefix else body
+            sorted_pages = sorted(set(word_pages[start_w:end_w]) if word_pages else known_pages)
+            page_start = sorted_pages[0] if sorted_pages else None
+            page_end = sorted_pages[-1] if sorted_pages else None
+            page_range = _format_page_range(sorted_pages)
             chunks.append(
                 Chunk(
                     content=content,
@@ -207,6 +281,7 @@ class MarkdownChunker:
                     metadata={
                         "chunk_type": "text",
                         "section": section_str,
+                        "reference_codes": list(codes),
                         "pages": sorted_pages,
                         "page_start": page_start,
                         "page_end": page_end,
@@ -221,16 +296,14 @@ class MarkdownChunker:
             )
         return chunks
 
-    def _split_text_body(self, text: str, max_chars: int, overlap_chars: int) -> list[str]:
-        """Divide un testo lungo in blocchi `<= max_chars` con `overlap_chars` di sovrapposizione."""
-        if len(text) <= max_chars:
-            return [text]
-
-        words = text.split()
-        if not words:
-            return []
-
-        parts: list[str] = []
+    def _split_word_ranges(
+        self,
+        words: list[str],
+        max_chars: int,
+        overlap_chars: int,
+    ) -> list[tuple[int, int]]:
+        """Divide le parole in intervalli `<= max_chars` caratteri con `overlap_chars` di sovrapposizione."""
+        ranges: list[tuple[int, int]] = []
         start_w = 0
         n_words = len(words)
 
@@ -244,7 +317,7 @@ class MarkdownChunker:
                 curr_len += w_len
                 end_w += 1
 
-            parts.append(" ".join(words[start_w:end_w]))
+            ranges.append((start_w, end_w))
             if end_w >= n_words:
                 break
 
@@ -259,14 +332,39 @@ class MarkdownChunker:
 
             start_w = back_w
 
-        return parts
+        return ranges
 
-    def _create_table_chunk(self, table: TableBlock, header_stack: list[str]) -> Chunk:
+    def _split_table(
+        self,
+        table: TableBlock,
+        header_stack: list[str],
+        reference_codes: list[str] | None = None,
+    ) -> list[Chunk]:
+        """Divide la tabella per righe e token e crea un chunk per ogni parte."""
+        codes = list(reference_codes or [])
+        # Margine per "(Parte k/N, righe a-b di c)" aggiunto al titolo di ogni parte
+        extra = self.count_tokens(self._header_prefix(header_stack, codes)) + 20
+        parts = split_large_table(
+            table,
+            self.max_table_rows,
+            max_tokens=self.max_table_tokens,
+            count_tokens=self.count_tokens,
+            extra_tokens=extra,
+        )
+        return [self._create_table_chunk(part, header_stack, codes) for part in parts]
+
+    def _create_table_chunk(
+        self,
+        table: TableBlock,
+        header_stack: list[str],
+        reference_codes: list[str] | None = None,
+    ) -> Chunk:
         """Crea un chunk per una tabella (o porzione di righe di una tabella), ripetendo
         gerarchia di intestazioni, titolo della tabella e header delle colonne.
         """
+        codes = list(reference_codes or [])
         table_md = table.to_markdown(include_title=True, include_footnotes=True)
-        header_prefix = "\n".join(header_stack)
+        header_prefix = self._header_prefix(header_stack, codes)
         content = f"{header_prefix}\n\n{table_md}" if header_prefix else table_md
 
         sorted_pages = sorted(set(table.pages))
@@ -288,6 +386,7 @@ class MarkdownChunker:
             metadata={
                 "chunk_type": "table",
                 "section": section_str,
+                "reference_codes": codes,
                 "pages": sorted_pages,
                 "page_start": page_start,
                 "page_end": page_end,
@@ -331,6 +430,7 @@ class MarkdownChunker:
                 principale per `image_paths`, con fallback a `table.meta["rag__table_images"]`.
         """
         from docling_core.types.doc import DocItemLabel, SectionHeaderItem, TableItem
+        from docling_core.types.doc.common.content_layer import ContentLayer
 
         resolved_doc_id = doc_id or getattr(doc, "name", None) or "document"
         resolved_source = source_file
@@ -348,8 +448,10 @@ class MarkdownChunker:
                     owned_by_tables.add(ref.cref)
 
         header_by_level: dict[int, str] = {}
-        current_paragraphs: list[str] = []
-        current_pages: list[int] = []
+        current_paragraphs: list[_Paragraph] = []
+        current_codes: list[str] = []
+        codes_have_content = False
+        running_refs = find_running_text_refs(doc)
         last_short_paragraph: str | None = None
         all_chunks: list[Chunk] = []
 
@@ -357,34 +459,60 @@ class MarkdownChunker:
             return [header_by_level[k] for k in sorted(header_by_level)]
 
         def flush_text() -> None:
-            nonlocal current_paragraphs, current_pages
+            nonlocal current_paragraphs
             if current_paragraphs:
                 all_chunks.extend(
-                    self._build_text_chunks(current_paragraphs, current_header_stack(), current_pages)
+                    self._build_text_chunks(current_paragraphs, current_header_stack(), current_codes)
                 )
                 current_paragraphs = []
-                current_pages = []
 
-        for item, _ in doc.iterate_items():
+        def set_codes(codes: list[str]) -> None:
+            """Attiva dei codici di riferimento: valgono per il contenuto successivo."""
+            nonlocal current_codes, codes_have_content
+            flush_text()
+            if current_codes and not codes_have_content:
+                # Due marcatori consecutivi valgono entrambi per lo stesso contenuto
+                current_codes = current_codes + [c for c in codes if c not in current_codes]
+            else:
+                current_codes = list(codes)
+            codes_have_content = False
+
+        # Include anche header/footer di pagina: un marcatore può essere finito lì
+        layers = {ContentLayer.BODY, ContentLayer.FURNITURE}
+        for item, _ in doc.iterate_items(included_content_layers=layers):
             ref = getattr(item, "self_ref", None)
             if ref in owned_by_tables:
                 continue
 
             label = getattr(item, "label", None)
-            if label in {DocItemLabel.PAGE_HEADER, DocItemLabel.PAGE_FOOTER}:
+            segments = split_by_markers(getattr(item, "text", "") or "", self.reference_patterns)
+
+            if segments and all(codes for _, _, codes in segments):
+                for _, _, codes in segments:
+                    set_codes(codes)
                 continue
 
-            item_pages = [p.page_no for p in getattr(item, "prov", []) if hasattr(p, "page_no")]
+            if (
+                ref in running_refs
+                or label in {DocItemLabel.PAGE_HEADER, DocItemLabel.PAGE_FOOTER}
+                or getattr(item, "content_layer", ContentLayer.BODY) == ContentLayer.FURNITURE
+            ):
+                continue
+
+            is_bracketed = bool(_BRACKETED_RE.match((getattr(item, "text", "") or "").strip()))
 
             # 1. Intestazione di sezione o titolo documento
-            if isinstance(item, SectionHeaderItem) or label in {
-                DocItemLabel.TITLE,
-                DocItemLabel.SECTION_HEADER,
-            }:
+            if not is_bracketed and (
+                isinstance(item, SectionHeaderItem)
+                or label in {DocItemLabel.TITLE, DocItemLabel.SECTION_HEADER}
+            ):
                 text = getattr(item, "text", "").strip()
-                if not text:
-                    continue
+                if len(re.sub(r"\W", "", text)) < 2:
+                    continue  # rumore (es. un titolo composto dalla sola lettera "x")
                 flush_text()
+                if codes_have_content:
+                    current_codes = []
+                    codes_have_content = False
                 level = getattr(item, "level", None)
                 if level is None:
                     level = 1 if label == DocItemLabel.TITLE else 2
@@ -414,25 +542,30 @@ class MarkdownChunker:
                     col_empty_threshold=self.col_empty_threshold,
                     min_rows_for_col_check=self.min_rows_for_col_check,
                 )
-                for row_chunk_block in split_large_table(t_block, self.max_table_rows):
-                    all_chunks.append(self._create_table_chunk(row_chunk_block, current_header_stack()))
+                all_chunks.extend(self._split_table(t_block, current_header_stack(), current_codes))
+                codes_have_content = True
                 last_short_paragraph = None
                 continue
 
             # 3. Paragrafo di testo / elemento di lista
-            text = getattr(item, "text", "").strip()
-            if not text:
-                continue
-
-            if label == DocItemLabel.LIST_ITEM:
-                marker = getattr(item, "marker", "-") or "-"
-                formatted = f"{marker} {text}" if not text.startswith(("-", "•", "*")) else text
-            else:
-                formatted = text
-
-            current_paragraphs.append(formatted)
-            current_pages.extend(item_pages)
-            last_short_paragraph = text if len(text) <= 160 else None
+            prov = [p for p in getattr(item, "prov", []) if hasattr(p, "page_no")]
+            for seg_idx, (offset, seg_text, codes) in enumerate(segments):
+                if codes:
+                    set_codes(codes)
+                    continue
+                text = seg_text.strip()
+                prefix = ""
+                if (
+                    label == DocItemLabel.LIST_ITEM
+                    and seg_idx == 0
+                    and not text.startswith(("-", "•", "*"))
+                ):
+                    prefix = getattr(item, "marker", "-") or "-"
+                current_paragraphs.append(_build_paragraph(seg_text, offset, prov, prefix))
+                codes_have_content = True
+                # Una nota o un'etichetta tra parentesi non è il titolo della tabella che segue
+                if label != DocItemLabel.FOOTNOTE and not is_bracketed:
+                    last_short_paragraph = text if len(text) <= 160 else None
 
         flush_text()
         return self._assign_ids(all_chunks, doc_id=resolved_doc_id, source_file=resolved_source)
@@ -495,7 +628,7 @@ class MarkdownChunker:
 
         for header_stack, section_body in sections:
             if not self.preserve_tables:
-                all_chunks.extend(self._build_text_chunks([section_body], header_stack, pages=[]))
+                all_chunks.extend(self._build_text_chunks([_Paragraph(section_body)], header_stack))
                 continue
             all_chunks.extend(self._process_tables_in_markdown_section(section_body, header_stack))
 
@@ -511,7 +644,7 @@ class MarkdownChunker:
 
         tables = find_all_tables(content)
         if not tables:
-            return self._build_text_chunks([content], header_stack, pages=[])
+            return self._build_text_chunks([_Paragraph(content)], header_stack)
 
         chunks: list[Chunk] = []
         lines = content.split("\n")
@@ -530,7 +663,7 @@ class MarkdownChunker:
 
             text_block = "\n".join(line for line in text_lines if line.strip())
             if text_block.strip():
-                chunks.extend(self._build_text_chunks([text_block], header_stack, pages=[]))
+                chunks.extend(self._build_text_chunks([_Paragraph(text_block)], header_stack))
 
             if not table.title and header_stack:
                 table.title = re.sub(r"^#+\s*", "", header_stack[-1]).strip()
@@ -538,7 +671,7 @@ class MarkdownChunker:
             # Ricalcola empty_columns e flag sull'intera tabella prima dello split per righe
             table.empty_columns = find_empty_columns(
                 table.headers,
-                table.rows,
+                table.value_rows,
                 col_empty_threshold=self.col_empty_threshold,
                 min_rows=self.min_rows_for_col_check,
             )
@@ -548,14 +681,13 @@ class MarkdownChunker:
                 min_rows_for_col_check=self.min_rows_for_col_check,
             )
 
-            for tc in split_large_table(table, self.max_table_rows):
-                chunks.append(self._create_table_chunk(tc, header_stack))
+            chunks.extend(self._split_table(table, header_stack))
 
             last_end = table.end_line + 1
 
         tail_lines = lines[last_end:]
         tail_block = "\n".join(line for line in tail_lines if line.strip())
         if tail_block.strip():
-            chunks.extend(self._build_text_chunks([tail_block], header_stack, pages=[]))
+            chunks.extend(self._build_text_chunks([_Paragraph(tail_block)], header_stack))
 
         return chunks
