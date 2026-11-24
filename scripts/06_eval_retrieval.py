@@ -1,17 +1,18 @@
-"""Step 6 - Valutazione quantitativa del Retrieval su Qdrant (con estrazione della frase/riga e domande negative).
+"""Step 6 - Valutazione quantitativa del Retrieval: candidati ibridi + reranker.
 
-Legge il file delle domande di test indicato, interroga Qdrant
-con i primi `top_k=20` risultati (e soglia di rilevanza `DEFAULT_SCORE_THRESHOLD = 0.55`) e:
-  1. Per le domande con risposta nel documento, verifica in quale posizione cade il chunk corretto:
-     `PRIMO (1°)`, `TRA I PRIMI 5`, `TRA I PRIMI 20`, `ASSENTE (>20)`.
-  2. Per le domande fuori perimetro (`expected_type == "none"` / `expected_pages == []`, es. criptovalute),
-     verifica che nessun chunk superi la soglia di similarità (`score_threshold = 0.55`), mostrando
-     anche qual era lo score massimo grezzo sotto soglia.
-  3. Estrae dal chunk trovato la SINGOLA FRASE (se `text`) o la SINGOLA RIGA DELLA TABELLA
+Per ogni domanda del file indicato:
+  1. Raccoglie i candidati (`QdrantVectorStore.hybrid_candidates`): 15 chunk dall'unione di
+     dense e sparse, più i chunk con i codici citati nella domanda (es. GRI 205-1).
+  2. Li riordina con il reranker (`Qwen/Qwen3-Reranker-0.6B`), senza soglie di punteggio.
+  3. Per le domande con risposta nel documento, verifica in quale posizione cade il chunk corretto:
+     `PRIMO (1°)`, `TRA I PRIMI 5`, `TRA I CANDIDATI`, `ASSENTE`.
+  4. Per le domande fuori perimetro (`expected_type == "none"`) riporta solo il punteggio più alto:
+     il retrieval restituisce sempre qualcosa, e riconoscere che la risposta manca spetta all'LLM.
+  5. Estrae dal chunk trovato la SINGOLA FRASE (se `text`) o la SINGOLA RIGA DELLA TABELLA
      (se `table`, con l'header delle colonne) più pertinente alla domanda tramite BGE-M3.
 
 Uso:
-    uv run python scripts/06_eval_retrieval.py domande.json [--doc-id ID] [--threshold 0.55]
+    uv run python scripts/06_eval_retrieval.py domande.json [--doc-id ID] [--candidates 15]
 """
 
 from __future__ import annotations
@@ -29,14 +30,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.vectorstore import (  # noqa: E402
+    DEFAULT_CANDIDATES,
     DEFAULT_COLLECTION_NAME,
     DEFAULT_QDRANT_PATH,
     QdrantVectorStore,
     SearchResult,
     get_embedder,
+    get_reranker,
 )
-
-DEFAULT_SCORE_THRESHOLD: float = 0.55
 
 
 def _extract_best_snippet(
@@ -142,12 +143,12 @@ def _is_matching_chunk(
 def classify_rank(rank: int | None) -> str:
     """Restituisce l'etichetta leggibile della fascia di posizionamento."""
     if rank is None:
-        return "ASSENTE (>20)"
+        return "ASSENTE (non tra i candidati)"
     if rank == 1:
         return "PRIMO (1°)"
     if rank <= 5:
         return f"TRA I PRIMI 5 (pos. {rank})"
-    return f"TRA I PRIMI 20 (pos. {rank})"
+    return f"TRA I CANDIDATI (pos. {rank})"
 
 
 def evaluate_questions(
@@ -155,150 +156,101 @@ def evaluate_questions(
     questions: list[dict[str, Any]],
     *,
     embedder: Any = None,
+    reranker: Any = None,
     doc_id: str | None = None,
-    top_k: int = 20,
-    score_threshold: float = DEFAULT_SCORE_THRESHOLD,
+    candidates: int = DEFAULT_CANDIDATES,
 ) -> dict[str, Any]:
     """Esegue la valutazione su tutte le domande (positive e negative/fuori perimetro)."""
+    embedder = embedder or get_embedder()
+    reranker = reranker or get_reranker()
     details: list[dict[str, Any]] = []
-    counts = {
-        "first": 0,
-        "top5": 0,
-        "top20": 0,
-        "missing": 0,
-        "negative_total": 0,
-        "negative_correct": 0,
-    }
-    reciprocal_ranks: list[float] = []
-    positive_count = 0
+    ranks: list[int | None] = []
+    negative_total = 0
 
     for q_item in questions:
-        q_id = str(q_item.get("id", ""))
         question = str(q_item["question"])
         exp_type = q_item.get("expected_type")
         exp_pages = [int(p) for p in q_item.get("expected_pages", [])]
         exp_keywords = [str(k) for k in q_item.get("expected_keywords", [])]
-        exp_answer = str(q_item.get("expected_answer", ""))
-        is_unanswerable = exp_type == "none" or (not exp_pages and exp_type == "none")
+        is_unanswerable = exp_type == "none"
 
-        q_vec = embedder.embed_query(question)
-        # Cerca sia con soglia sia senza soglia (per mostrare lo score grezzo più alto anche quando viene scartato)
-        raw_hits = store.search(query_vector=q_vec, top_k=top_k, doc_id=doc_id)
-        hits = [h for h in raw_hits if h.score >= score_threshold]
+        out = embedder.embed_texts_both([question], batch_size=1)
+        q_vec = out.dense_vecs[0]
+        pool = store.hybrid_candidates(
+            question,
+            query_vectors=(q_vec, out.sparse_vecs[0]),
+            limit=candidates,
+            doc_id=doc_id,
+        )
+        hits = reranker.rerank(question, pool)
+        top1 = hits[0] if hits else None
 
+        rank: int | None = None
         if is_unanswerable:
-            counts["negative_total"] += 1
-            rejected = len(hits) == 0
-            if rejected:
-                counts["negative_correct"] += 1
-                bucket_label = f"ASSENTE CORRETTO (max score={raw_hits[0].score:.4f} < {score_threshold})"
-            else:
-                bucket_label = f"FALSO POSITIVO (score={hits[0].score:.4f} >= {score_threshold})"
-
-            raw_top1_snippet = (
-                _extract_best_snippet(raw_hits[0], question, embedder, query_vec=q_vec)
-                if raw_hits
-                else None
-            )
-            details.append(
-                {
-                    "id": q_id,
-                    "question": question,
-                    "expected_type": exp_type,
-                    "expected_pages": exp_pages,
-                    "expected_answer": exp_answer,
-                    "is_unanswerable": True,
-                    "rank": None,
-                    "status": bucket_label,
-                    "matched_chunk_id": None,
-                    "matched_score": None,
-                    "matched_snippet": None,
-                    "top1_chunk_id": raw_hits[0].chunk_id if raw_hits else None,
-                    "top1_type": raw_hits[0].chunk_type if raw_hits else None,
-                    "top1_pages": raw_hits[0].pages if raw_hits else [],
-                    "top1_score": raw_hits[0].score if raw_hits else None,
-                    "top1_snippet": raw_top1_snippet,
-                }
-            )
-            continue
-
-        positive_count += 1
-        found_rank: int | None = None
-        matched_hit: SearchResult | None = None
-        for idx, h in enumerate(hits, start=1):
-            if _is_matching_chunk(h, exp_pages, exp_type, exp_keywords):
-                found_rank = idx
-                matched_hit = h
-                break
-
-        bucket_label = classify_rank(found_rank)
-        if found_rank == 1:
-            counts["first"] += 1
-            counts["top5"] += 1
-            counts["top20"] += 1
-            reciprocal_ranks.append(1.0)
-        elif found_rank is not None and found_rank <= 5:
-            counts["top5"] += 1
-            counts["top20"] += 1
-            reciprocal_ranks.append(1.0 / found_rank)
-        elif found_rank is not None:
-            counts["top20"] += 1
-            reciprocal_ranks.append(1.0 / found_rank)
+            negative_total += 1
+            status = "FUORI PERIMETRO"
         else:
-            counts["missing"] += 1
-            reciprocal_ranks.append(0.0)
+            rank = next(
+                (
+                    i
+                    for i, h in enumerate(hits, start=1)
+                    if _is_matching_chunk(h, exp_pages, exp_type, exp_keywords)
+                ),
+                None,
+            )
+            ranks.append(rank)
+            status = classify_rank(rank)
+        matched = hits[rank - 1] if rank else None
 
-        best_overall = hits[0] if hits else (raw_hits[0] if raw_hits else None)
-        top1_snippet = (
-            _extract_best_snippet(best_overall, question, embedder, query_vec=q_vec)
-            if best_overall is not None
-            else None
-        )
-        matched_snippet = (
-            _extract_best_snippet(matched_hit, question, embedder, query_vec=q_vec)
-            if matched_hit is not None
-            else None
-        )
+        def snippet(hit: SearchResult | None) -> str | None:
+            if hit is None:
+                return None
+            return _extract_best_snippet(hit, question, embedder, query_vec=q_vec)
 
         details.append(
             {
-                "id": q_id,
+                "id": str(q_item.get("id", "")),
                 "question": question,
                 "expected_type": exp_type,
                 "expected_pages": exp_pages,
-                "expected_answer": exp_answer,
-                "is_unanswerable": False,
-                "rank": found_rank,
-                "status": bucket_label,
-                "matched_chunk_id": matched_hit.chunk_id if matched_hit else None,
-                "matched_score": matched_hit.score if matched_hit else None,
-                "matched_snippet": matched_snippet,
-                "top1_chunk_id": best_overall.chunk_id if best_overall else None,
-                "top1_type": best_overall.chunk_type if best_overall else None,
-                "top1_pages": best_overall.pages if best_overall else [],
-                "top1_score": best_overall.score if best_overall else None,
-                "top1_snippet": top1_snippet,
+                "expected_answer": str(q_item.get("expected_answer", "")),
+                "is_unanswerable": is_unanswerable,
+                "candidates": len(hits),
+                "rank": rank,
+                "status": status,
+                "matched_chunk_id": matched.chunk_id if matched else None,
+                "matched_score": matched.score if matched else None,
+                "matched_sources": matched.sources if matched else [],
+                "matched_snippet": snippet(matched),
+                "top1_chunk_id": top1.chunk_id if top1 else None,
+                "top1_type": top1.chunk_type if top1 else None,
+                "top1_pages": top1.pages if top1 else [],
+                "top1_score": top1.score if top1 else None,
+                "top1_snippet": snippet(top1),
             }
         )
 
-    pos_div = max(positive_count, 1)
-    summary = {
+    pos_div = max(len(ranks), 1)
+    first = sum(r == 1 for r in ranks)
+    top5 = sum(r is not None and r <= 5 for r in ranks)
+    found = sum(r is not None for r in ranks)
+    return {
         "total_questions": len(questions),
-        "positive_questions": positive_count,
-        "negative_questions": counts["negative_total"],
-        "negative_correct": counts["negative_correct"],
-        "score_threshold": score_threshold,
-        "first_count": counts["first"],
-        "top5_count": counts["top5"],
-        "top20_count": counts["top20"],
-        "missing_count": counts["missing"],
-        "hit_at_1": round(counts["first"] / pos_div, 4),
-        "hit_at_5": round(counts["top5"] / pos_div, 4),
-        "hit_at_20": round(counts["top20"] / pos_div, 4),
-        "mrr": round(sum(reciprocal_ranks) / pos_div, 4),
+        "positive_questions": len(ranks),
+        "negative_questions": negative_total,
+        "embedder": embedder.model_name,
+        "reranker": reranker.model_name,
+        "candidates_limit": candidates,
+        "first_count": first,
+        "top5_count": top5,
+        "found_count": found,
+        "missing_count": len(ranks) - found,
+        "hit_at_1": round(first / pos_div, 4),
+        "hit_at_5": round(top5 / pos_div, 4),
+        "hit_in_candidates": round(found / pos_div, 4),
+        "mrr": round(sum(1.0 / r for r in ranks if r) / pos_div, 4),
         "results": details,
     }
-    return summary
 
 
 def main() -> None:
@@ -307,9 +259,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Valutazione del retrieval")
     parser.add_argument("questions", type=Path, help="file JSON delle domande di test")
     parser.add_argument("--doc-id", default=None, help="limita la ricerca a un documento")
-    parser.add_argument("--threshold", type=float, default=DEFAULT_SCORE_THRESHOLD)
+    parser.add_argument(
+        "--candidates",
+        type=int,
+        default=DEFAULT_CANDIDATES,
+        help="candidati da dense + sparse passati al reranker",
+    )
     args = parser.parse_args()
-    questions_path, doc_id_filter, threshold = args.questions, args.doc_id, args.threshold
+    questions_path, doc_id_filter = args.questions, args.doc_id
 
     if not questions_path.exists():
         raise FileNotFoundError(f"File domande non trovato: {questions_path}")
@@ -328,9 +285,10 @@ def main() -> None:
         )
 
     embedder = get_embedder()
+    reranker = get_reranker()
     print(
         f"Punti indicizzati in Qdrant: {n_points} | Domande di test: {len(questions)} | "
-        f"Soglia rilevanza (score_threshold): {threshold}"
+        f"Candidati: {args.candidates} + codici citati | Reranker: {reranker.model_name}"
     )
     print("=" * 105)
 
@@ -338,9 +296,9 @@ def main() -> None:
         store,
         questions,
         embedder=embedder,
+        reranker=reranker,
         doc_id=doc_id_filter,
-        top_k=20,
-        score_threshold=threshold,
+        candidates=args.candidates,
     )
 
     for item in report["results"]:
@@ -356,7 +314,7 @@ def main() -> None:
         elif item.get("is_unanswerable") and item["top1_chunk_id"]:
             top1_ind = "\n                    ".join((item["top1_snippet"] or "").splitlines())
             print(
-                f"  [Scartato < {threshold}]: {item['top1_chunk_id']} (score={item['top1_score']}): {top1_ind}"
+                f"  [1° posto]      : {item['top1_chunk_id']} (score={item['top1_score']}): {top1_ind}"
             )
         elif item["rank"] != 1 and item["top1_chunk_id"]:
             top1_ind = "\n                    ".join((item["top1_snippet"] or "").splitlines())
@@ -370,10 +328,11 @@ def main() -> None:
         f"RIEPILOGO DOMANDE NEL DOCUMENTO ({report['positive_questions']}): "
         f"1° posto: {report['first_count']}/{report['positive_questions']} ({report['hit_at_1']*100:.1f}%) | "
         f"Top-5: {report['top5_count']}/{report['positive_questions']} ({report['hit_at_5']*100:.1f}%) | "
-        f"Top-20: {report['top20_count']}/{report['positive_questions']} ({report['hit_at_20']*100:.1f}%) | "
+        f"Tra i candidati: {report['found_count']}/{report['positive_questions']} "
+        f"({report['hit_in_candidates']*100:.1f}%) | "
         f"MRR: {report['mrr']:.4f}\n"
-        f"RIEPILOGO DOMANDE FUORI PERIMETRO ({report['negative_questions']}): "
-        f"Scartate correttamente sotto soglia ({threshold}): {report['negative_correct']}/{report['negative_questions']}"
+        f"DOMANDE FUORI PERIMETRO ({report['negative_questions']}): non scartate in questa fase, "
+        f"spetta all'LLM riconoscere che la risposta manca"
     )
 
     out_report = ROOT / "data/qdrant/eval_report.json"

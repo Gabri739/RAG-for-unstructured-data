@@ -1,89 +1,90 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAG Chatbot</title>
-    <link rel="stylesheet" href="/static/styles.css?v=2">
+    <title>RAG Assistant</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/styles.css?v=6">
+    <link rel="stylesheet" href="/static/app.css?v=14">
 </head>
-<body>
-    <div id="app">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-left">
-                <a href="/" class="back-btn" title="Back to home">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+<body class="app">
+    <div class="layout" id="layout">
+        <aside class="sidebar" aria-label="Chat">
+            <div class="sidebar-head">
+                <a class="brand" href="/">RAG Assistant</a>
+                <button class="collapse" id="collapseBtn" type="button" aria-expanded="true" aria-controls="sidebarBody">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <line x1="19" y1="12" x2="5" y2="12"/>
                         <polyline points="12 19 5 12 12 5"/>
                     </svg>
-                </a>
-                <div class="logo">RAG Chatbot</div>
+                </button>
             </div>
-            <div class="subtitle">Upload a PDF and start chatting</div>
-        </header>
-
-        <!-- Main Chat Area -->
-        <main class="chat-container" id="chatContainer">
-            <!-- Welcome Message -->
-            <div class="message bot-message">
-                <div class="avatar">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+            <div class="sidebar-body" id="sidebarBody">
+                <p class="section-label">Chat</p>
+                <ul class="doc-list" id="docList"></ul>
+                <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
+                <button class="new-chat" id="uploadBtn" type="button" disabled>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
                     </svg>
-                </div>
-                <div class="message-content">
-                    <p>Hello! I'm your RAG assistant. Upload a PDF document and ask me anything about it.</p>
-                </div>
+                    <span id="uploadLabel">Nuova chat con un PDF</span>
+                </button>
+                <div class="codes" id="codeOptions"></div>
+            </div>
+            <div class="sidebar-foot">
+                <button class="lock" id="lockBtn" type="button" aria-label="Privacy" aria-describedby="lockTip" hidden>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="4" y="11" width="16" height="10" rx="2"/>
+                        <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+                    </svg>
+                </button>
+            </div>
+        </aside>
+
+        <main class="chat">
+            <header class="chat-head">
+                <h1 id="docTitle">Nessuna chat aperta</h1>
+                <a class="pdf-button" id="pdfLink" target="_blank" rel="noopener" title="Apri il PDF in una nuova scheda" hidden>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="8" y1="13" x2="16" y2="13"/>
+                        <line x1="8" y1="17" x2="13" y2="17"/>
+                    </svg>
+                    <span>Apri PDF</span>
+                    <svg class="pdf-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <line x1="7" y1="17" x2="17" y2="7"/>
+                        <polyline points="8 7 17 7 17 16"/>
+                    </svg>
+                </a>
+            </header>
+            <div class="banner" id="banner" role="status" hidden></div>
+            <div class="messages" id="messages">
+                <div class="thread" id="thread" aria-live="polite"></div>
+            </div>
+            <div class="composer">
+                <form id="form">
+                    <label class="visually-hidden" for="question">Domanda</label>
+                    <textarea id="question" rows="1" maxlength="2000" placeholder="Fai una domanda sul documento" disabled></textarea>
+                    <button class="primary" id="sendBtn" type="submit" disabled>Invia</button>
+                </form>
+                <p class="hint">Ogni domanda è indipendente dalle precedenti. Le risposte possono contenere errori, soprattutto sulle tabelle: verifica i numeri nelle fonti.</p>
             </div>
         </main>
-
-        <!-- Input Area -->
-        <div class="input-container">
-            <div class="input-wrapper">
-                <input
-                    type="file"
-                    id="fileInput"
-                    accept=".pdf"
-                    hidden
-                >
-                <button
-                    class="upload-btn"
-                    id="uploadBtn"
-                    title="Upload PDF"
-                >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17,8 12,3 7,8"/>
-                        <line x1="12" y1="3" x2="12" y2="15"/>
-                    </svg>
-                </button>
-                <textarea
-                    id="messageInput"
-                    class="message-input"
-                    placeholder="Type your message..."
-                    rows="1"
-                ></textarea>
-                <button
-                    class="send-btn"
-                    id="sendBtn"
-                    disabled
-                >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="22" y1="2" x2="11" y2="13"/>
-                        <polygon points="22,2 15,22 11,13 2,9"/>
-                    </svg>
-                </button>
-            </div>
-            <div class="upload-status" id="uploadStatus"></div>
+    </div>
+    <div class="tooltip" id="lockTip" role="tooltip" hidden>Tutti i file rimangono in locale su questo PC, per gestire al meglio la tua privacy.</div>
+    <dialog class="confirm" id="confirmDialog" aria-labelledby="confirmText">
+        <p class="confirm-text" id="confirmText">Vuoi eliminare questa chat e di conseguenza questo file?</p>
+        <p class="confirm-doc" id="confirmDoc"></p>
+        <p class="confirm-note" id="confirmNote"></p>
+        <p class="confirm-error" id="confirmError" role="alert" hidden></p>
+        <div class="confirm-actions">
+            <button class="secondary" id="confirmCancel" type="button" autofocus>Annulla</button>
+            <button class="danger" id="confirmOk" type="button">Elimina</button>
         </div>
-    </div>
-
-    <!-- Loading Overlay -->
-    <div class="loading-overlay" id="loadingOverlay" hidden>
-        <div class="spinner"></div>
-        <div class="loading-text">Processing document...</div>
-    </div>
-
-    <script src="/static/app.js?v=3"></script>
+    </dialog>
+    <script src="/static/app.js?v=9"></script>
 </body>
 </html>

@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, Callable
 
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.base_models import InputFormat
@@ -85,17 +86,23 @@ def get_converter(ocr: bool = False) -> DocumentConverter:
     )
 
 
-def convert_pdf(pdf_path: Path, *, ocr: bool | None = None) -> tuple[DoclingDocument, list[int]]:
+def convert_pdf(
+    pdf_path: Path,
+    *,
+    ocr: bool | None = None,
+    progress_callback: Callable[[Any], None] | None = None,
+) -> tuple[DoclingDocument, list[int]]:
     """Converte un PDF in DoclingDocument.
 
     Con `ocr=None` (default) l'OCR si attiva solo se ci sono pagine scansionate.
+    `progress_callback` riceve gli eventi di avanzamento di Docling (fasi e pagine completate).
     Restituisce `(documento, pagine_scansionate)`.
     """
     scanned = find_scanned_pages(pdf_path)
     use_ocr = bool(scanned) if ocr is None else ocr
     if scanned:
         _log.info("Pagine senza testo digitale: %s (OCR %s)", scanned, "attivo" if use_ocr else "spento")
-    doc = get_converter(use_ocr).convert(pdf_path).document
+    doc = get_converter(use_ocr).convert(pdf_path, progress_callback=progress_callback).document
 
     if scanned and use_ocr:
         with_text = {

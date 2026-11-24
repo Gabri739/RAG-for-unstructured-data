@@ -13,3 +13,14 @@ This repo aims to create a RAG (Retrieval-Augmented Generation) for unstructured
    2. Re-ranking: a "Re-ranker" evaluates those 5 chunks to guarantee the absolute best information is prioritized;
    3. Generation (LLM): The pipeline sends those chunks, along with the user's question, to the LLM;
    4. Output: The LLM reads the Markdown table and generates a perfect, conversational answer, citing the exact page number it found the data on;
+
+#Web app
+
+Requires [Ollama](https://ollama.com) with the local model (`ollama pull qwen3.5:4b`). Then:
+
+```
+uv run uvicorn src.webapp.main:app --host 127.0.0.1 --port 8000
+```
+
+and open http://127.0.0.1:8000. Upload a PDF, wait for it to be processed and ask questions about it: every answer cites the pages it comes from.
+The app has no authentication: do not expose it to the internet as it is. While it is running, the scripts cannot open the same Qdrant index.

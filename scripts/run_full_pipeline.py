@@ -6,7 +6,7 @@ Esegue in sequenza in memoria (salvando tutti gli artefatti intermedi su disco):
   3. Salvataggio su disco dei ritagli PNG delle tabelle (`save_table_images`)
   4. Chunking strutturato per intestazioni e righe tabella (`MarkdownChunker`)
   5. Calcolo degli embedding `BAAI/bge-m3` (sia `dense` 1024-d sia `sparse`) e salvataggio su Qdrant
-  6. Valutazione del retrieval (`06_eval_retrieval.py`), solo se si indica un file di domande
+  6. Valutazione del retrieval con candidati ibridi e reranker (`06_eval_retrieval.py`), solo se si indica un file di domande
 
 Uso:
     python scripts/run_full_pipeline.py percorso.pdf cartella_output [--max-table-rows 25]
@@ -45,6 +45,7 @@ from src.vectorstore import (  # noqa: E402
     DEFAULT_QDRANT_PATH,
     QdrantVectorStore,
     get_embedder,
+    get_reranker,
     get_token_counter,
 )
 
@@ -267,9 +268,8 @@ def main() -> None:
                 store,
                 questions,
                 embedder=embedder,
+                reranker=get_reranker(),
                 doc_id=doc_id,
-                top_k=20,
-                score_threshold=eval_mod.DEFAULT_SCORE_THRESHOLD,
             )
             out_eval = ROOT / "data/qdrant/eval_report.json"
             out_eval.write_text(
@@ -282,10 +282,9 @@ def main() -> None:
                 f"({eval_report['hit_at_1']*100:.1f}%) | "
                 f"Top-5: {eval_report['top5_count']}/{eval_report['positive_questions']} "
                 f"({eval_report['hit_at_5']*100:.1f}%) | "
-                f"Top-20: {eval_report['top20_count']}/{eval_report['positive_questions']} "
-                f"({eval_report['hit_at_20']*100:.1f}%) | "
-                f"MRR: {eval_report['mrr']:.4f} | "
-                f"Fuori perimetro scartate: {eval_report['negative_correct']}/{eval_report['negative_questions']}"
+                f"Tra i candidati: {eval_report['found_count']}/{eval_report['positive_questions']} "
+                f"({eval_report['hit_in_candidates']*100:.1f}%) | "
+                f"MRR: {eval_report['mrr']:.4f}"
             )
 
     store.close()

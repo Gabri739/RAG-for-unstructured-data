@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test dello store vettoriale Qdrant (salvataggio dense + sparse, ricerca classica sul denso, filtri)."""
+"""Test dello store vettoriale Qdrant (salvataggio dense + sparse, ricerca densa, candidati ibridi, filtri)."""
 
 import json
 import sys
@@ -8,11 +8,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.chunkers import MarkdownChunker  # noqa: E402
+from src.chunkers.reference_codes import find_mentioned_codes  # noqa: E402
 from src.vectorstore import (  # noqa: E402
     BGE_M3_DIM,
     DENSE_VECTOR_NAME,
     SPARSE_VECTOR_NAME,
     QdrantVectorStore,
+    Reranker,
+    SearchResult,
     SparseEmbedding,
 )
 
@@ -108,6 +111,93 @@ Spesa fornitori per area geografica
     print("[OK] test_qdrant_dual_vectors_and_dense_search")
 
 
+def test_find_mentioned_codes():
+    """I codici citati in una domanda vengono normalizzati come nei metadati dei chunk."""
+    assert find_mentioned_codes("Cosa dichiara il Gruppo in relazione al GRI 205-1?") == ["GRI 205-1"]
+    assert find_mentioned_codes("Vedi GRI 205-1, 205-2 e GRI 2.7.") == ["GRI 205-1", "GRI 205-2", "GRI 2-7"]
+    assert find_mentioned_codes("gri 2-22 e ancora GRI 2-22") == ["GRI 2-22"]
+    # Numeri che non sono codici GRI
+    assert find_mentioned_codes("Nel periodo 2021-2023 la norma ISO 14001 e il 205-1") == []
+    assert find_mentioned_codes("GRI 2-2023") == []
+    print("[OK] test_find_mentioned_codes")
+
+
+def test_hybrid_candidates():
+    """Verifica unione alternata dense/sparse, chunk con codice citato, limiti e filtro documento."""
+    def chunk(doc_id: str, i: int, codes: list[str]) -> dict:
+        return {
+            "content": f"testo {i}",
+            "headers": [],
+            "chunk_type": "text",
+            "metadata": {"doc_id": doc_id, "chunk_id": f"{doc_id}__{i}", "reference_codes": codes},
+        }
+
+    def dense(x: float, y: float, z: float = 0.0) -> list[float]:
+        return [x, y, z] + [0.0] * (BGE_M3_DIM - 3)
+
+    # Dense: 0 > 1 > 2 > 3 > 4 > 5. Sparse: 2 > 4 (gli altri non hanno il termine 7)
+    codes = [[], [], [], [], [], ["GRI 205-1", "GRI 205-2"]]
+    d_vecs = [dense(1, 0.1 * i) for i in range(5)] + [dense(0, 0, 1)]
+    s_vecs = [SparseEmbedding([100 + i], [1.0]) for i in range(6)]
+    s_vecs[2] = SparseEmbedding([7], [0.9])
+    s_vecs[4] = SparseEmbedding([7], [0.5])
+
+    store = QdrantVectorStore(collection_name="test_hybrid", in_memory=True)
+    store.index_chunks(
+        [chunk("a", i, codes[i]) for i in range(6)], dense_vectors=d_vecs, sparse_vectors=s_vecs
+    )
+    store.index_chunks(
+        [chunk("b", 0, ["GRI 205-1"])],
+        dense_vectors=[dense(1, 0)],
+        sparse_vectors=[SparseEmbedding([7], [1.0])],
+    )
+    vectors = (dense(1, 0), SparseEmbedding([7], [1.0]))
+
+    def ids(query: str, **kw) -> list[str]:
+        return [h.chunk_id for h in store.hybrid_candidates(query, query_vectors=vectors, doc_id="a", **kw)]
+
+    # Alternanza senza doppioni: dense 0, sparse 2, dense 1, sparse 4
+    assert ids("domanda", limit=4) == ["a__0", "a__2", "a__1", "a__4"]
+    # Quando la lista sparse finisce si continua con la dense
+    assert ids("domanda", limit=5) == ["a__0", "a__2", "a__1", "a__4", "a__3"]
+    # Il chunk con il codice citato si AGGIUNGE al limite, e solo per il documento richiesto
+    assert ids("Cosa dice il GRI 205-1?", limit=2) == ["a__0", "a__2", "a__5"]
+    assert ids("Cosa dice il GRI 205-1?", limit=2, max_code_chunks=0) == ["a__0", "a__2"]
+    assert ids("Cosa dice il GRI 999-9?", limit=2) == ["a__0", "a__2"]
+
+    by_id = {
+        h.chunk_id: h.sources
+        for h in store.hybrid_candidates("GRI 205-1", query_vectors=vectors, doc_id="a", limit=6)
+    }
+    assert by_id["a__0"] == ["dense"]
+    assert sorted(by_id["a__2"]) == ["dense", "sparse"]
+    assert "code" in by_id["a__5"]
+    # Senza filtro documento si vedono anche gli altri
+    everywhere = store.hybrid_candidates("GRI 205-1", query_vectors=vectors, limit=2)
+    assert {"a__5", "b__0"} <= {h.chunk_id for h in everywhere}
+
+    store.close()
+    print("[OK] test_hybrid_candidates")
+
+
+def test_reranker_order():
+    """Il reranker ordina per punteggio, non modifica i candidati e gestisce la lista vuota."""
+    class FakeModel:
+        def predict(self, pairs, **_):
+            return [{"basso": -2.0, "alto": 5.0, "medio": 1.0}[text] for _, text in pairs]
+
+    reranker = Reranker.__new__(Reranker)
+    reranker.model, reranker.batch_size = FakeModel(), 8
+    hits = [
+        SearchResult(0.5, t, t, "d", "text", t, [], "", None, [], [], False, []) for t in ("basso", "alto", "medio")
+    ]
+    assert [h.content for h in reranker.rerank("q", hits)] == ["alto", "medio", "basso"]
+    assert [h.score for h in reranker.rerank("q", hits, top_k=2)] == [5.0, 1.0]
+    assert [h.score for h in hits] == [0.5, 0.5, 0.5]
+    assert reranker.rerank("q", []) == []
+    print("[OK] test_reranker_order")
+
+
 def test_qdrant_with_real_chunks_json():
     """Verifica il caricamento diretto di `chunks.json` generato su Sara Assicurazioni."""
     chunks_path = Path("data/processed/docling/dnf2023_test_p43_44/chunks.json")
@@ -141,5 +231,8 @@ def test_qdrant_with_real_chunks_json():
 
 if __name__ == "__main__":
     test_qdrant_dual_vectors_and_dense_search()
+    test_find_mentioned_codes()
+    test_hybrid_candidates()
+    test_reranker_order()
     test_qdrant_with_real_chunks_json()
     print("\nTUTTI I TEST QDRANT (DENSE + SPARSE) SUPERATI!")

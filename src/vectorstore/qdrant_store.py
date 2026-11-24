@@ -4,18 +4,20 @@ Architettura di storage su Qdrant:
   - Ogni punto salva ENTRAMBI i vettori generati da BAAI/bge-m3:
       * `"dense"`: vettore denso a 1024 dimensioni (Cosine similarity)
       * `"sparse"`: vettore sparso `SparseVector(indices=..., values=...)` (lexical weights)
-  - La ricerca (`search()`) svolge la ricerca classica sul vettore `"dense"`, mentre i
-    vettori `"sparse"` sono già archiviati su Qdrant e pronti per attivare in qualsiasi
-    momento la ricerca ibrida senza dover re-indicizzare i documenti.
+  - `search()` svolge la ricerca classica sul solo vettore `"dense"`.
+  - `hybrid_candidates()` raccoglie i candidati per il reranker: unione di `dense` e `sparse`,
+    più i chunk con i codici di riferimento citati nella domanda.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import zip_longest
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from src.chunkers.markdown_chunker import Chunk, make_point_id
+from src.chunkers.reference_codes import find_mentioned_codes
 
 from .bge_m3 import BGE_M3_DIM, BGEM3Embedder, SparseEmbedding, get_embedder
 
@@ -23,6 +25,8 @@ DEFAULT_COLLECTION_NAME: str = "rag_chunks"
 DEFAULT_QDRANT_PATH: Path = Path("data/qdrant")
 DENSE_VECTOR_NAME: str = "dense"
 SPARSE_VECTOR_NAME: str = "sparse"
+DEFAULT_CANDIDATES: int = 15  # candidati da dense + sparse passati al reranker
+DEFAULT_MAX_CODE_CHUNKS: int = 10  # massimo di chunk aggiunti per i codici citati
 
 
 @dataclass
@@ -55,6 +59,32 @@ class SearchResult:
     possible_incomplete_table: bool
     empty_columns: list[str]
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Ricerche che hanno trovato il chunk: "dense", "sparse", "code"
+    sources: list[str] = field(default_factory=list)
+
+
+def _to_search_result(point: Any, source: str) -> SearchResult:
+    """Converte un punto restituito da Qdrant in `SearchResult`."""
+    payload = dict(point.payload or {})
+    content = str(payload.pop("content", ""))
+    headers = list(payload.pop("headers", []))
+    return SearchResult(
+        score=round(float(point.score), 4),
+        point_id=str(point.id),
+        chunk_id=str(payload.get("chunk_id", "")),
+        doc_id=str(payload.get("doc_id", "")),
+        chunk_type=str(payload.get("chunk_type", "text")),
+        content=content,
+        headers=headers,
+        section=str(payload.get("section", "")),
+        page_range=payload.get("page_range"),
+        pages=list(payload.get("pages", [])),
+        image_paths=list(payload.get("image_paths", [])),
+        possible_incomplete_table=bool(payload.get("possible_incomplete_table", False)),
+        empty_columns=list(payload.get("empty_columns", [])),
+        metadata=payload,
+        sources=[source],
+    )
 
 
 def _normalize_chunk_dict(item: Chunk | dict[str, Any]) -> tuple[str, list[str], dict[str, Any]]:
@@ -72,7 +102,7 @@ def _normalize_chunk_dict(item: Chunk | dict[str, Any]) -> tuple[str, list[str],
 
 
 class QdrantVectorStore:
-    """Gestisce la collezione Qdrant (con vettori `dense` + `sparse`) e la ricerca classica sul denso."""
+    """Gestisce la collezione Qdrant (con vettori `dense` + `sparse`) e le ricerche su di essa."""
 
     def __init__(
         self,
@@ -144,6 +174,24 @@ class QdrantVectorStore:
         )
         return int(res.count)
 
+    def document_counts(self) -> dict[str, int]:
+        """Numero di chunk indicizzati per ogni `doc_id`."""
+        counts: dict[str, int] = {}
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=1000,
+                offset=offset,
+                with_payload=["doc_id"],
+                with_vectors=False,
+            )
+            for point in points:
+                doc_id = str((point.payload or {}).get("doc_id", ""))
+                counts[doc_id] = counts.get(doc_id, 0) + 1
+            if offset is None:
+                return counts
+
     def delete_document(self, doc_id: str) -> int:
         """Elimina tutti i chunk associati a `doc_id` prima di una re-indicizzazione."""
         from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
@@ -171,6 +219,7 @@ class QdrantVectorStore:
         sparse_vectors: Sequence[SparseEmbedding | tuple[Sequence[int], Sequence[float]]] | None = None,
         replace_existing_doc: bool = True,
         batch_size: int = 16,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> IndexingReport:
         """Calcola gli embedding BGE-M3 (sia `dense` sia `sparse`) e salva i chunk su Qdrant.
 
@@ -182,6 +231,7 @@ class QdrantVectorStore:
             replace_existing_doc: Se `True` (default), cancella tutti i punti esistenti con lo
                 stesso `doc_id` prima di inserire i nuovi chunk.
             batch_size: Dimensione del batch per embedding e upsert su Qdrant.
+            on_progress: Chiamata dopo ogni batch scritto con `(punti scritti, punti totali)`.
         """
         from qdrant_client.models import PointStruct, SparseVector
 
@@ -252,6 +302,8 @@ class QdrantVectorStore:
                 points=points[start : start + batch_size],
                 wait=True,
             )
+            if on_progress is not None:
+                on_progress(min(start + batch_size, len(points)), len(points))
 
         return IndexingReport(
             collection_name=self.collection_name,
@@ -313,30 +365,92 @@ class QdrantVectorStore:
             with_payload=True,
         )
 
-        results: list[SearchResult] = []
-        for sp in response.points:
-            payload = dict(sp.payload or {})
-            content = str(payload.pop("content", ""))
-            headers = list(payload.pop("headers", []))
-            results.append(
-                SearchResult(
-                    score=round(float(sp.score), 4),
-                    point_id=str(sp.id),
-                    chunk_id=str(payload.get("chunk_id", "")),
-                    doc_id=str(payload.get("doc_id", "")),
-                    chunk_type=str(payload.get("chunk_type", "text")),
-                    content=content,
-                    headers=headers,
-                    section=str(payload.get("section", "")),
-                    page_range=payload.get("page_range"),
-                    pages=list(payload.get("pages", [])),
-                    image_paths=list(payload.get("image_paths", [])),
-                    possible_incomplete_table=bool(payload.get("possible_incomplete_table", False)),
-                    empty_columns=list(payload.get("empty_columns", [])),
-                    metadata=payload,
-                )
+        return [_to_search_result(sp, DENSE_VECTOR_NAME) for sp in response.points]
+
+    def hybrid_candidates(
+        self,
+        query: str,
+        *,
+        embedder: BGEM3Embedder | None = None,
+        query_vectors: tuple[Sequence[float], SparseEmbedding] | None = None,
+        limit: int = DEFAULT_CANDIDATES,
+        max_code_chunks: int = DEFAULT_MAX_CODE_CHUNKS,
+        doc_id: str | None = None,
+    ) -> list[SearchResult]:
+        """Candidati da passare al reranker.
+
+        1. `limit` chunk distinti, presi a turno dalla ricerca `dense` e da quella `sparse`.
+        2. In più, fino a `max_code_chunks` chunk con un codice citato nella domanda
+           (es. "GRI 205-1"), i più vicini alla domanda se sono troppi.
+
+        L'ordine e gli `score` non sono confrontabili tra ricerche diverse: l'ordinamento
+        finale spetta al reranker. `sources` dice quali ricerche hanno trovato ogni chunk.
+
+        Args:
+            query_vectors: Vettori `(dense, sparse)` della domanda già calcolati (opzionali).
+        """
+        from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue, SparseVector
+
+        if query_vectors is None:
+            out = (embedder or get_embedder()).embed_texts_both([query], batch_size=1)
+            dense, sparse = out.dense_vecs[0], out.sparse_vecs[0]
+        else:
+            dense, sparse = list(query_vectors[0]), query_vectors[1]
+
+        doc_conditions: list[Any] = (
+            [FieldCondition(key="doc_id", match=MatchValue(value=doc_id))] if doc_id is not None else []
+        )
+
+        def run(vector: Any, using: str, source: str, n: int, extra: Sequence[Any] = ()) -> list[SearchResult]:
+            conditions = [*doc_conditions, *extra]
+            response = self.client.query_points(
+                collection_name=self.collection_name,
+                query=vector,
+                using=using,
+                query_filter=Filter(must=conditions) if conditions else None,
+                limit=n,
+                with_payload=True,
             )
-        return results
+            return [_to_search_result(p, source) for p in response.points]
+
+        dense_hits = run(dense, DENSE_VECTOR_NAME, "dense", limit)
+        sparse_hits = (
+            run(
+                SparseVector(indices=sparse.indices, values=sparse.values),
+                SPARSE_VECTOR_NAME,
+                "sparse",
+                limit,
+            )
+            if sparse.indices
+            else []
+        )
+        codes = find_mentioned_codes(query)
+        code_hits = (
+            run(
+                dense,
+                DENSE_VECTOR_NAME,
+                "code",
+                max_code_chunks,
+                [FieldCondition(key="reference_codes", match=MatchAny(any=codes))],
+            )
+            if codes and max_code_chunks > 0
+            else []
+        )
+
+        ordered: dict[str, SearchResult] = {}
+        for pair in zip_longest(dense_hits, sparse_hits):
+            for hit in pair:
+                if hit is not None and hit.point_id not in ordered and len(ordered) < limit:
+                    ordered[hit.point_id] = hit
+        for hit in code_hits:
+            ordered.setdefault(hit.point_id, hit)
+
+        # Completa `sources` per i chunk trovati da più di una ricerca
+        for hit in (*dense_hits, *sparse_hits, *code_hits):
+            kept = ordered.get(hit.point_id)
+            if kept is not None and hit.sources[0] not in kept.sources:
+                kept.sources.append(hit.sources[0])
+        return list(ordered.values())
 
     def close(self) -> None:
         """Chiude la connessione al client Qdrant."""

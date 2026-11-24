@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, Iterable, Sequence
 
 
 @dataclass(frozen=True)
@@ -19,12 +19,15 @@ class ReferencePattern:
     - `marker_re`: individua il marcatore nel testo; il gruppo 1 contiene l'elenco dei codici.
     - `code_re`: riconosce un singolo codice dentro l'elenco.
     - `format_code`: forma normalizzata del codice.
+    - `mention_re`: individua i codici citati in un testo libero, per esempio una domanda
+      ("GRI 205-1 e 205-2"); il gruppo 1 contiene l'elenco dei codici.
     """
 
     name: str
     marker_re: re.Pattern[str]
     code_re: re.Pattern[str]
     format_code: Callable[[re.Match[str]], str]
+    mention_re: re.Pattern[str] | None = None
 
     def parse(self, body: str) -> list[str]:
         """Codici normalizzati e senza doppioni contenuti nel corpo di un marcatore."""
@@ -41,9 +44,27 @@ GRI_PATTERN = ReferencePattern(
     marker_re=re.compile(r"\[\s*GRI\s+([^\]]+)\]", re.IGNORECASE),
     code_re=re.compile(r"(\d{1,3})[-.](\d{1,2})"),
     format_code=lambda m: f"GRI {m.group(1)}-{m.group(2)}",
+    mention_re=re.compile(
+        r"\bGRI\s*(\d{1,3}[-.]\d{1,2}(?!\d)"
+        r"(?:\s*(?:[,;]|\be\b|\bed\b|\band\b)\s*(?:GRI\s*)?\d{1,3}[-.]\d{1,2}(?!\d))*)",
+        re.IGNORECASE,
+    ),
 )
 
 REFERENCE_PATTERNS: dict[str, ReferencePattern] = {p.name: p for p in (GRI_PATTERN,)}
+
+
+def find_mentioned_codes(
+    text: str, patterns: Iterable[ReferencePattern] = tuple(REFERENCE_PATTERNS.values())
+) -> list[str]:
+    """Codici citati in un testo libero (`"...al GRI 205-1?"` -> `["GRI 205-1"]`)."""
+    codes: list[str] = []
+    for pattern in patterns:
+        if pattern.mention_re is None:
+            continue
+        for m in pattern.mention_re.finditer(text):
+            codes += [c for c in pattern.parse(m.group(1)) if c not in codes]
+    return codes
 
 
 def format_marker(codes: Sequence[str]) -> str:
